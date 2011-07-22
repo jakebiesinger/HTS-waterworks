@@ -1,0 +1,2 @@
+[filter "lastmodified"]
+    clean = "sed -r -e 's/(.{,10}Last Modified:).*/echo \"\\1 `date \"+%F %H:%M\"`\"/e' -e 's/(.{,10}Current Version:).*/echo \"\\1 `git describe --tags`\"/e'"

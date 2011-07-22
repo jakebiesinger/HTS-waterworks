@@ -1,0 +1,7 @@
+*.pyc
+.svn
+*.swp
+.pygr_data
+.pydevproject
+.project
+*.komodoproject
