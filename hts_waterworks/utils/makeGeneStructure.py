@@ -54,7 +54,6 @@ def splitGeneStructure(geneLines, outNameBase, promoterSize, promoterExtend, dow
     bin   name    chrom   strand  txStart txEnd   cdsStart    cdsEnd  exonCount   exonStarts  exonEnds [...] '''
     global opts, args
     geneLines = itertools.ifilter(bedCommentFilter, geneLines)  # filter comments and headers
-    startCol = 1
     promoter_out = open(outNameBase + '.promoter%s_ext%s' % (promoterSize, promoterExtend), 'w')
     downstream_out = open(outNameBase + '.down%s_ext%s' % (downstreamSize, downstreamExtend), 'w')
     utr5_out = open(outNameBase + '.utr5', 'w')
@@ -119,7 +118,7 @@ def splitGeneStructure(geneLines, outNameBase, promoterSize, promoterExtend, dow
         else:
             tss_out.write('\t'.join([chrom, str(txEnd), str(txEnd + 1)] + ([name, name2,strand] if opts.with_gene_name else [])) + '\n')
 
-def parse_gene_line(geneline):
+def parse_gene_line(geneline, startCol=1):
     """From a refseq-formatted gene file, parse a single gene's attributes"""
     fields = geneline.strip().split('\t')
     name, chrom, strand = fields[startCol: startCol + 3]
