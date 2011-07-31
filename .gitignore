@@ -6,3 +6,4 @@
 .project
 *.komodoproject
 .komodotools
+_build
