@@ -2,8 +2,8 @@
     module to set up a pipeline program
 """
 
-#  Current Version: 0.0
-#  Last Modified: 2011-07-22 16:52
+#  Current Version: 0.1-1-gc9504c5
+#  Last Modified: 2011-07-30 19:40
 
 import StringIO
 from ConfigParser import ConfigParser
@@ -77,6 +77,9 @@ bowtie_params = -n 2 -m 1 --phred64-quals -s 1 -p %(max_threads)s
 # Keep up to 10 alignments for each sequence read
 #bowtie_params = -n 2 -k 10 --best --phred64-quals -s 1 -p %(max_threads)s
 
+run_tophat = False
+tophat_params = -p %(max_threads)s
+
 run_pash = False
 pash_params = -G 6 -k 13 -n 21 -s 30 -d 800 -S .
 
@@ -94,6 +97,8 @@ maq_bed_score = 0
 
 collapse_mapped_read_IDs = False
 remove_internal_priming = False
+
+map_to_transcriptome = False
 
 [peaks]
 downsample_reads = True
@@ -180,21 +185,8 @@ merge_num_iterations = 2
 
 # global configuration
 cfg = ConfigParser()
-try:
-    with open(CONFIG_FILENAME) as infile:
-        cfg.readfp(infile)
-except IOError as e:
-    with log_mtx:
-        log.info('Config file missing. Assuming defaults...')
-    cfg.readfp(StringIO.StringIO(CONFIG_TEMPLATE))
-
-
-@files(None, CONFIG_FILENAME)
-def bootstrap(_, out_config):
-    'create a configuration template'
-    with open(out_config, 'w') as outfile:
-        outfile.write(CONFIG_TEMPLATE)
-
+cfg.readfp(StringIO.StringIO(CONFIG_TEMPLATE))  # set up defaults
+cfg.read(CONFIG_FILENAME)  # add user-specified settings
 
 def genome_path():
     'returns the path to the genome fasta file (and downloads it if necessary)'

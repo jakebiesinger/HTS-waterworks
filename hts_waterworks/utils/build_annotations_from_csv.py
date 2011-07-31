@@ -90,7 +90,8 @@ def makeResourceFromBed(fileLines, genome, docstring='Temp Resource From BED', d
     tableName = os.path.split(dataPath)[1]
     sqlDataPath = dataPath if dataPath != 'memory' else ':memory:'  # SQLite has special name for in-memory tables
     dataTable = convertDictToSQLite(bedDict, tableName, sqlDataPath)
-    annotDB = annotation.AnnotationDB(dataTable, genome, sliceAttrDict=eval(defaultSliceAttrs))
+    annotDB = annotation.AnnotationDB(dataTable, genome,
+                                      sliceAttrDict=eval(defaultSliceAttrs))
     annotMap = makeNLMSA([annotDB], dataPath)
     return dataTable, annotDB, annotMap
 
@@ -115,7 +116,6 @@ def makeNLMSA(annotDBList, dataPath='memory'):
 
 
 def convertDictToSQLite(bedDict, tableName, dataPath=':memory:'):
-    
     liteserver = sqlgraph.SQLiteServerInfo(dataPath)
     liteserver.cursor().execute('BEGIN TRANSACTION;')
     liteserver._connection.text_factory = str
@@ -131,7 +131,7 @@ def convertDictToSQLite(bedDict, tableName, dataPath=':memory:'):
                                                 (tableName, attributeStr))
     for index, lineData in enumerate(bedDict):
         # add entry to table
-        if re.search('_', lineData['chromosome']):
+        if 'hap' in lineData['chromosome']:
             continue
         lineData['rowid'] = index
         outputAnnot = dataTable.new(**lineData)

@@ -5,8 +5,8 @@
 
 """
 
-#  Current Version: 0.0
-#  Last Modified: 2011-07-22 16:52
+#  Current Version: 0.1-1-gc9504c5
+#  Last Modified: 2011-07-30 19:40
 
 # --- imports ---
 from ruffus import follows, files
@@ -20,20 +20,14 @@ import hts_waterworks.visualize as visualize
 import hts_waterworks.annotation as annotation
 import hts_waterworks.pas_seq as pas_seq
 import hts_waterworks.motif_discovery as motif_discovery
+from hts_waterworks.bootstrap import CONFIG_FILENAME, CONFIG_TEMPLATE
 
 
-# --- Current Pipeline dependencies ---
-# Bowtie
-# MEME (+ mpich2 if parallel desired)
-# NestedMICA
-# pygr (+ pyrex)
-# scipy
-# numpy
-# motility
-# ruffus
-# bedtools
-# matplotlib
-# fastx toolkit (gnuplot)
+@files(None, CONFIG_FILENAME)
+def bootstrap(_, out_config):
+    'create a configuration template'
+    with open(out_config, 'w') as outfile:
+        outfile.write(CONFIG_TEMPLATE)
 
 @follows(preprocessing.final_output, preprocessing.read_length_histogram,
          preprocessing.quality_boxplot, preprocessing.quality_nuc_dist)
@@ -71,7 +65,10 @@ def expression():
 @follows(motif_discovery.motif_enrichment_genomic,
          motif_discovery.motif_enrichment_control,
          motif_discovery.consensus_enrichment,
-         motif_discovery.motif_presence_sorted_peaks)
+         motif_discovery.motif_presence_sorted_peaks,
+         motif_discovery.make_seq_logo
+         #motif_discovery.run_stamp,
+         )
 def motifs():
     """motif discovery complete"""
     pass

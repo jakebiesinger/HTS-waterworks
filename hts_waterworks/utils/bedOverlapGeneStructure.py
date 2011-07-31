@@ -13,6 +13,7 @@ import shlex
 import subprocess
 import tempfile
 import scipy
+from scipy.stats.kde import gaussian_kde
 import matplotlib
 from matplotlib import pyplot
 
@@ -52,6 +53,8 @@ def main(argv=None):
                       help='Save the overlap structure to the given file.')
     parser.add_option('--names_in_order', type='string', default="['promoter', 'utr5', 'exon', 'intron', 'utr3', 'down', 'intergenic']",
                       help='the order in which to count and report overlaps.')
+    parser.add_option('--tss_hist', action='store_true', default=False,
+                      help='plot the tss as a histogram instead of a density plot')
     if not argv:
         argv = sys.argv[1:]
     opts, args = parser.parse_args(argv)
@@ -123,7 +126,14 @@ def main(argv=None):
         pyplot.close()
     if opts.plot_dist_to_txStart and opts.random_shuffles <= 0:
         # only plot the TSS histogram
-        pyplot.hist(dists, bins=30, normed=True)
+        if opts.tss_hist:
+            pyplot.hist(dists, bins=30, normed=True)
+        else:
+            t_kde = gaussian_kde(dists)
+            inds = scipy.linspace(-50000, 50000, 100)
+            t_vals = t_kde.evaluate(inds)
+            pyplot.plot(inds, t_vals, label=expName)
+        pyplot.xlim([-50000, 50000])
         pyplot.title('Distance to TSS for %s regions from\n%s' % (sum(regionCounts), expName))
         pyplot.savefig(opts.plot_dist_to_txStart)
         pyplot.close()
@@ -182,9 +192,21 @@ def main(argv=None):
             if len(dists) == 0 or len(randomDists) == 0:
                 raise RuntimeError("dists is empty!", dists, len(randomDists))
             pyplot.hold(True)
-            pyplot.hist(dists, bins=200, normed=True, color='black', alpha=.3)
+            if opts.tss_hist:
+                pyplot.hist(dists, bins=200, normed=True, color='black', alpha=.3)
+            else:
+                t_kde = gaussian_kde(dists)
+                inds = scipy.linspace(-50000, 50000, 100)
+                t_vals = t_kde.evaluate(inds)
+                pyplot.plot(inds, t_vals, label=expName, color='black')
             pyplot.hold(True)
-            pyplot.hist(randomDists, bins=200, normed=True, color='black', histtype='step')
+            if opts.tss_hist:
+                pyplot.hist(randomDists, bins=200, normed=True, color='black', histtype='step')
+            else:
+                c_kde = gaussian_kde(randomDists)
+                inds = scipy.linspace(-50000, 50000, 100)
+                c_vals = c_kde.evaluate(inds)
+                pyplot.plot(inds, c_vals, label='Random', color='blue')
             pyplot.xlim([-50000, 50000])
             pyplot.title('Distance to TSS for %s regions from\n%s' % (sum(regionCounts), expName))
             pyplot.xlabel('Distance to TSS in bp')

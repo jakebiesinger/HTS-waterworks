@@ -5,8 +5,8 @@
 
 """
 
-#  Current Version: 0.0
-#  Last Modified: 2011-07-22 16:52
+#  Current Version: 0.1-1-gc9504c5
+#  Last Modified: 2011-07-30 19:40
 
 import shlex
 import glob
@@ -40,7 +40,7 @@ import hts_waterworks.annotation as annotation
 
 # motif setup
 
-@transform(call_peaks.all_peak_caller_functions + [annotation] + 
+@transform(call_peaks.all_peak_caller_functions + 
           ['*.peaks_summits.%s_around' % cfg.get('peaks', 'peak_summit_size')],
         regex(r'(.*\.peaks$|.*\..*_around$|_genes.promoter.*_ext[\d]+$)'),
         r'\1.top%s.peaks' % cfg.getint('motifs', 'motif_chunk_size'),
@@ -56,12 +56,8 @@ def get_top_peaks(in_peaks, out_subset, num_peaks_to_keep):
             outfile.writelines('\t'.join(map(str, s)) for s in subset)
 
 #@follows(get_genome)
-@transform([],
-    #call_peaks.all_peak_caller_functions + [get_top_peaks],
-    suffix('.peaks'),
-           '.peaks_summits.%s_around.fasta' % cfg.getint('peaks',
-                                                         'peak_summit_size'))
-def get_summit_sequence(in_peaks, out_fasta):
+@transform([get_top_peaks], suffix(''), '.fasta')
+def get_peak_sequence(in_peaks, out_fasta):
     """Get fasta file for peak summits
     """
     in_summits = out_fasta.replace('.fasta', '')
@@ -70,19 +66,7 @@ def get_summit_sequence(in_peaks, out_fasta):
                                         in_summits, out_fasta))
     get_bed_sequence.main(args)
 
-@follows(get_genome)
-@transform(call_peaks.all_peak_caller_functions + [get_top_peaks],
-           suffix('.peaks'), '.peaks.fasta')
-def get_peak_sequence(in_peaks, out_fasta):
-    """Get fasta file for entire peaks
-    """
-    args = shlex.split('''--genome=%s %s %s''' % (
-                                        cfg.get('DEFAULT', 'worldbase_genome'),
-                                        in_peaks, out_fasta))
-    get_bed_sequence.main(args)
-
-@split([get_summit_sequence, get_peak_sequence],
-    regex(r'(.+).fasta'), r'\1.small_sample.*.fasta')
+@split(get_peak_sequence, regex(r'(.+peaks_summits.+).fasta'), r'\1.small_sample.*.fasta')
 def motif_select_random_seqs(in_fasta, out_pattern):
     """Split a fasta file into several chunks so motif discovery is easier"""
     name = name = re.search('(.*).fasta', in_fasta).groups()[0]
@@ -114,8 +98,8 @@ def discover_meme_motifs(in_fasta, out_motifs):
                                            cfg.get('motifs', 'meme_params'),
                                            out_motifs)
     #if 'top' in in_fasta and 'around' in in_fasta:
-    sys_call(cmd)
-    motifs = sequence_motif.parseMemeMotifs(in_fasta)
+    #sys_call(cmd)
+    motifs = sequence_motif.parseMemeMotifs('%s_meme_out/meme.txt' % out_motifs)
     pickle.dump(motifs, open(out_motifs, 'w'))
 
 @active_if(cfg.getboolean('motifs', 'run_nmica'))
@@ -300,6 +284,9 @@ def consensus_enrichment(in_files, out_enrichment):
 def motif_presence_sorted_peaks(in_files, out_patterns, in_prefix, in_suffix):
     """Plot the running motif presence, starting at most significant peaks"""
     in_peaks, in_motifs = in_files[0], in_files[1:]
+    print in_files
+    print in_peaks, in_motifs
+    return
     out_summary = in_prefix + in_suffix + '.%s.peak_motif_presence'
     out_png = in_prefix + in_suffix + '.%s.peak_motif_presence.png'
     out_locations = in_prefix + in_suffix + '.%s.peak_motif_locations'
@@ -483,6 +470,7 @@ def make_seq_logo(in_pwm, eps_pattern, out_base, to_generate=1000,
         with open(out_base + '.motif_%s.logo.png' % name, 'w') as outfile:
             outfile.write(im)
 
+@transform(['*.consensus.motifs', motif_mean_sd], suffix(''), '.stamp_out.pdf')
 def run_stamp(in_pwm, out_stamp_pdf):
     """Check for similar motifs using the STAMP webservice"""
     import urllib, urllib2
@@ -510,8 +498,10 @@ def run_stamp(in_pwm, out_stamp_pdf):
     req = urllib2.Request(url, data)
     response = urllib2.urlopen(req)
     im = response.read()
-    #job_id = re.search(r'results/(\d+)_results.html', im).groups()[0]
-    pdf_url = re.sub(r'.*(?=http)', '').sub(r'_results\.html.*', '.pdf')
+    print im
+    job_id = re.search(r'results/(\d+)_results.html', im).groups()[0]
+    pdf_url = re.sub(r'.*(?=http)', '', job_id)
+    pdf_url = re.sub(r'_results\.html.*', '.pdf', pdf_url)
     req = urllib2.Request(pdf_url)
     response = urllib2.urlopen(req)
     im = response.read()

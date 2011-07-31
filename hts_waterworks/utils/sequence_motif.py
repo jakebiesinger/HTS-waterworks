@@ -418,11 +418,12 @@ def parseMemeMotifs(meme_file, logOdds=True):
                 end_match = re.search(block_end, line)
                 if end_match:
                     inBlock = False
-                    curMotif = motifs.Motif(curMatrix)
+                    curMotif = Motif(curMatrix)
                     curMotif._threshold = thresholdVal
-                    consensus = motifs.pwmToConsensus(curMatrix)
+                    consensus = pwmToConsensus(curMatrix)
                     motif_name = motifID + '_' + consensus
                     allMatrices[motif_name] =  curMotif
+                    #print 'added', curMotif, motif_name
                     curMatrix = []
                     motifID = 'None'
                     continue
@@ -436,7 +437,7 @@ def parseMemeMotifs(meme_file, logOdds=True):
                     motifID += '_LOD'
                 else:
                     motifID += '_Freq'
-                print 'now reading', motifID
+                #print 'now reading', motifID
                 skip = 1
                 inHeader = True
                 continue
@@ -449,6 +450,8 @@ def parseMemeMotifs(meme_file, logOdds=True):
                 thresholdVal = scipy.nan
                 inBlock = True
         # end parsing
+    if len(allMatrices) == 0:
+        raise RuntimeError("Didn't parse any motifs from %s", meme_file)
     return allMatrices
 
 

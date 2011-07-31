@@ -3,27 +3,105 @@
     module for mapping reads to the genome.
 """
 
-#  Current Version: 0.0
-#  Last Modified: 2011-07-22 16:52
+#  Current Version: 0.1-1-gc9504c5
+#  Last Modified: 2011-07-30 19:40
 
 import re
 import random
 import os
 import tempfile
+import pickle
 
 from ruffus import (transform, follows, files, split, merge, add_inputs,
                     regex, suffix, jobs_limit)
 from ruffus.task import active_if
-from pygr import worldbase
+from pygr import worldbase, cnestedlist, seqdb
 
 from hts_waterworks.utils.ruffus_utils import (sys_call, main_logger as log,
                                            main_mutex as log_mtx)
 from hts_waterworks.bootstrap import genome_path, get_genome, cfg
 import hts_waterworks.preprocessing as preprocessing
 
+#: the references to map against for this run (genome, transcriptome, etc)
+reference_genomes = [genome_path()]
+if cfg.getboolean('mapping', 'map_to_transcriptome'):
+    reference_genomes.append('*_genes.transcriptome.fasta')
+
+@active_if(cfg.getboolean('mapping', 'map_to_transcriptome'))
+@split('*_genes', regex(r'(.*)_genes$'),
+       [r'\1_genes.transcriptome.fasta',
+        r'\1_genes.transcriptome.seqdb',
+        r'\1_genes.transcriptome.msa'])
+def make_transcriptome(in_genes, out_files):
+    """Splice UTR's and exons from gene annotations into a transcriptome.
+    Creates a fasta-file of resulting genes and a gene to genome alignment.
+    
+    """
+    out_fasta, out_db, out_msa = out_files
+    startCol = 1
+    msa = cnestedlist.NLMSA(out_msa, mode='w', pairwiseMode=True)
+    genome = get_genome(None, None, touch_file=False)
+    for chrom in genome.values():
+        msa += chrom
+    outfile = open(out_fasta, 'w')
+    gene_db = {}
+    for i, line in enumerate(open(in_genes)):
+        print i
+        # parse
+        fields = line.split('\t')
+        name, chrom, strand = fields[startCol: startCol + 3]
+        (txStart, txEnd, cdsStart,
+                            cdsEnd) = map(int, fields[startCol+3:startCol+7])
+        exons = zip(map(int, fields[startCol+8][:-1].split(',')),
+                    map(int, fields[startCol+9][:-1].split(',')))
+        name2 = fields[startCol + 11]
+        noncoding = name.startswith('NR_') or cdsStart < 0 or cdsEnd < 0
+        if 'hap' in chrom:
+            continue
+        
+        # create a record for the gene
+        seq_id = '%s_%s_%s' % (i, name, name2)
+        if noncoding or len(exons) == 0:
+            # add entire tx region
+            region = genome[chrom][txStart:txEnd]
+            sequence = seqdb.Sequence(str(region), seq_id)
+            msa[region] += sequence
+        else:
+            # make the sequence by splicing parts
+            seq = ''
+            if txStart < cdsStart:
+                seq += str(genome[chrom][txStart:cdsStart])
+                
+            seq += ''.join(str(genome[chrom][e_start:e_end])
+                           for e_start, e_end in exons if e_start < e_end)
+            if exons[-1][1] < txEnd:
+                seq += str(genome[chrom][exons[-1][1]:txEnd])
+            sequence = seqdb.Sequence(seq, seq_id)
+            # save the sequence to a fasta file
+            outfile.write('>%s\n%s\n' % (seq_id, str(sequence)))
+            # make the alignment back to genomic coords
+            p_start = 0
+            if txStart < cdsStart:
+                region = genome[chrom][txStart:cdsStart]
+                msa[region] += sequence[p_start:p_start + len(region)]
+                p_start = len(region)
+            for e_index, (e_start, e_end) in enumerate(exons):
+                if e_start < e_end:
+                    region = genome[chrom][e_start:e_end]
+                    msa[region] += sequence[p_start:p_start + len(region)]
+                    p_start += len(region)
+            if exons[-1][1] < txEnd:
+                print exons[-1], txEnd
+                region = genome[chrom][exons[-1][1]:txEnd]
+                msa[region] += sequence[p_start:p_start + len(region)]
+                p_start += len(region)
+        gene_db[seq_id] = sequence
+    msa.build(saveSeqDict=True)
+    outfile.close()
+    pickle.dump(gene_db, open(out_db, 'w'))
 
 @active_if(cfg.getboolean('mapping', 'run_mosaik'))
-@files(genome_path(), genome_path() + '.mosaik_dat')
+@transform(reference_genomes, suffix(''), '.mosaik_dat')
 def run_mosaik_build_reference(in_genome, out_bin):
     'convert reference to mosaik binary'
     cmd = 'MosaikBuild -fr %s -oa %s' % (in_genome, out_bin)
@@ -100,26 +178,14 @@ def pash_to_bed(in_pash, out_bed):
 
 
 @active_if(cfg.getboolean('mapping', 'run_bowtie'))
-@split(None, '%s.*.ebwt' % genome_path())
-def get_bowtie_index(_, out_pattern):
-    'retrieve or build bowtie index'
-    cmd = 'wget -N ftp://ftp.cbcb.umd.edu/pub/data/bowtie_indexes/%s.ebwt.zip'
-    cmd = cmd % cfg.get('DEFAULT', 'genome')
-    try:
-        sys_call(cmd)
-        cmd = 'unzip -o %s.ebwt.zip -d %s' % (cfg.get('DEFAULT', 'genome'),
-                                              os.path.split(genome_path())[0])
-        sys_call(cmd)
-    except:
-        # downloading the file failed, so we have to build the index ourselves
-        with log_mtx:
-            log.info('Bowtie index download failed. '
-                     'Trying to build a new index')
-        cmd = 'bowtie-build %s %s' % (genome_path(), genome_path())
-        sys_call(cmd)
+@split(reference_genomes, regex(r'(.*)'), r'\1.*.ebwt')
+def build_bowtie_index(in_genome, out_pattern):
+    'build bowtie index on genome'
+    cmd = 'bowtie-build %s %s' % (in_genome, in_genome)
+    sys_call(cmd)
 
 @active_if(cfg.getboolean('mapping', 'run_bowtie'))
-@follows(get_bowtie_index)
+@follows(build_bowtie_index)
 @jobs_limit(cfg.getint('DEFAULT', 'max_throttled_jobs'), 'throttled')
 @transform(preprocessing.final_output, suffix(''), '.bowtie_reads')
 def run_bowtie(in_fastq, out_bowtie):
@@ -144,6 +210,18 @@ def bowtie_to_bed(in_bowtie, out_bed):
                 stop = int(start) + read_lengths + 1  # stop is fencepost after
                 outfile.write('\t'.join([chrom, start, str(stop), name, '0',
                                          strand]) + '\n')
+
+@active_if(cfg.getboolean('mapping', 'run_tophat'))
+@follows(build_bowtie_index)
+@jobs_limit(cfg.getint('DEFAULT', 'max_throttled_jobs'), 'throttled')
+@transform(preprocessing.final_output, suffix(''), '.tophat_reads')
+def run_tophat(in_fastq, out_tophat):
+    'gapped alignment of reads to reference using TopHat'
+    cmd = 'tophat %s %s %s --output-dir=%s' % (genome_path(), in_fastq,
+                                  cfg.get('mapping', 'bowtie_params'),
+                                  '%s_tophat_out' % in_fastq)
+    sys_call(cmd)
+    # TODO: convert BAM output to BED format
 
 
 # Mapping with ssaha2

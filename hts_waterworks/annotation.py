@@ -4,8 +4,8 @@
 
 """
 
-#  Current Version: 0.0
-#  Last Modified: 2011-07-22 16:52
+#  Current Version: 0.1-1-gc9504c5
+#  Last Modified: 2011-07-30 19:40
 
 import shlex
 
@@ -198,7 +198,8 @@ def make_expression_ks(in_files, out_pattern):
     #print gene_expr_sorted
     for in_peaks in in_peaks_list:
         print in_peaks
-        genes_with_peaks = set(line.split('\t')[9] for line in open(in_peaks))
+        genes_with_peaks = set(line.strip().split('\t')[9] for line in open(in_peaks))
+        print genes_with_peaks
         #print in_peaks, genes_with_peaks
         with open(in_expression + '.with_peaks.%s.ks_data' %
                                             in_peaks, 'w') as outfile:
@@ -210,7 +211,7 @@ def make_expression_ks(in_files, out_pattern):
 def draw_expression_ks(in_data, out_png):
     """KS-test to see if the 1's and 0's from input is non-uniform"""
 
-    R_script = """
+    R_script = r"""
 d<-read.table(file="%(in_data)s", header=FALSE, sep="\t")
 # This does the actual KS test
 N<-dim(d)[1]

@@ -4,8 +4,8 @@
     experiments.
 """
 
-#  Current Version: 0.0
-#  Last Modified: 2011-07-22 16:52
+#  Current Version: 0.1-1-gc9504c5
+#  Last Modified: 2011-07-30 19:40
 
 import itertools 
 
@@ -23,11 +23,13 @@ from hts_waterworks.bootstrap import cfg
 
 
 @active_if(cfg.getboolean('PAS-Seq', 'merge_adjacent_reads'))
-@transform(mapping.all_mappers_output, suffix('.mapped_reads'),
-           '.merged.mapped_reads',
+@split(mapping.all_mappers_output, regex('(.*).mapped_reads$'),
+           [r'\1.merged.mapped_reads', r'\1.merged.pileup_reads'],
            cfg.getint('PAS-Seq', 'merge_window_width'),
-           cfg.getint('PAS-Seq', 'merge_num_iterations'))
-def merge_adjacent_reads(in_bed, out_merged, window_width, iterations):
+           cfg.getint('PAS-Seq', 'merge_num_iterations'),
+           r'\1.merged.mapped_reads', r'\1.merged.pileup_reads')
+def merge_adjacent_reads(in_bed, out_pattern, window_width, iterations,
+                         out_merged, out_pileup):
     """Reassign read ends to a weighted average of adjacent reads"""
     # helper functions for parsing bed files
     filter_lines = lambda l: l.strip() and (not l.startswith('#') or \
@@ -40,6 +42,7 @@ def merge_adjacent_reads(in_bed, out_merged, window_width, iterations):
     print cmd
     sys_call(cmd, file_log=False)
     p_file = tmpfile
+    outfile_pileup = None  # used on last iteration to generate the final pileup
     
     for i in range(iterations):
         print 'merge iteration %s' % i
@@ -51,6 +54,7 @@ def merge_adjacent_reads(in_bed, out_merged, window_width, iterations):
             p_file = in_bed + '.merge_adjacent_%s' % i
         else:
             p_file = out_merged
+            outfile_pileup = open(out_pileup, 'w')
         outfile = open(p_file, 'w')
 
         # parse first line
@@ -80,6 +84,10 @@ def merge_adjacent_reads(in_bed, out_merged, window_width, iterations):
                 outfile.writelines('\t'.join([chrom, str(avg), str(avg+1),
                                          n_name, '0', n_strand]) + '\n'
                               for n_name, n_strand in zip(p_names, p_strands))
+                if outfile_pileup is not None:
+                    outfile_pileup.write('\t'.join([chrom, str(avg), str(avg+1),
+                                           n_name, str(len(p_stops)), n_strand])
+                                         + '\n')
                 # reset our record
                 p_chrom = chrom
                 p_stops = [stop]
@@ -90,7 +98,7 @@ def merge_adjacent_reads(in_bed, out_merged, window_width, iterations):
                 p_stops.append(stop)
                 p_names.append(name)
                 p_strands.append(strand)
-        
+
         # output anything left in queue after EOF
         if len(p_stops) > 0:
             avg = int(round(sum(p_stops) / float(len(p_stops))))
@@ -98,11 +106,13 @@ def merge_adjacent_reads(in_bed, out_merged, window_width, iterations):
             outfile.writelines('\t'.join([chrom, str(avg), str(avg+1),
                                      n_name, '0', n_strand]) + '\n'
                           for n_name, n_strand in zip(p_names, p_strands))
+            if outfile_pileup is not None:
+                outfile_pileup.write('\t'.join([chrom, str(avg), str(avg+1),
+                                           n_name, str(len(p_stops)), n_strand])
+                                     + '\n')
+        if outfile_pileup is not None:
+            outfile_pileup.close()
         outfile.close()
 
-@split(merge_adjacent_reads, regex(r'(.*\.merged)\.mapped_reads$'),
-       '\1.*.pileup', r'\1')
-def pileup_strands(in_bed, out_pattern, out_base):
-    "split the strands from the merged reads and give a pileup of the reads"
-    # TODO finish up here
-    pass
+
+

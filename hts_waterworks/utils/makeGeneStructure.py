@@ -64,12 +64,8 @@ def splitGeneStructure(geneLines, outNameBase, promoterSize, promoterExtend, dow
     tss_out = open(outNameBase + '.tss', 'w')
     noncoding_out = open(outNameBase + '.noncoding', 'w')
     for line in geneLines:
-        fields = line.split('\t')
-        name, chrom, strand = fields[startCol: startCol + 3]
-        txStart, txEnd, cdsStart, cdsEnd = map(int, fields[startCol+3:startCol+7])
-        exons = zip(map(int, fields[startCol+8][:-1].split(',')), map(int, fields[startCol+9][:-1].split(',')))
-        name2 = fields[startCol + 11]
-        noncoding = name.startswith('NR_') or cdsStart < 0 or cdsEnd < 0
+        (name, chrom, strand, txStart, txEnd, cdsStart,
+            cdsEnd, exons, name2, noncoding) = parse_gene_line(line)
         if noncoding:
             noncoding_out.write('\t'.join([chrom, str(txStart), str(txEnd)] + ([name, name2,strand] if opts.with_gene_name else [])) + '\n')
             continue
@@ -122,6 +118,17 @@ def splitGeneStructure(geneLines, outNameBase, promoterSize, promoterExtend, dow
             tss_out.write('\t'.join([chrom, str(txStart), str(txStart + 1)] + ([name, name2,strand] if opts.with_gene_name else [])) + '\n')
         else:
             tss_out.write('\t'.join([chrom, str(txEnd), str(txEnd + 1)] + ([name, name2,strand] if opts.with_gene_name else [])) + '\n')
+
+def parse_gene_line(geneline):
+    """From a refseq-formatted gene file, parse a single gene's attributes"""
+    fields = geneline.strip().split('\t')
+    name, chrom, strand = fields[startCol: startCol + 3]
+    txStart, txEnd, cdsStart, cdsEnd = map(int, fields[startCol+3:startCol+7])
+    exons = zip(map(int, fields[startCol+8][:-1].split(',')), map(int, fields[startCol+9][:-1].split(',')))
+    name2 = fields[startCol + 11]
+    noncoding = name.startswith('NR_') or cdsStart < 0 or cdsEnd < 0
+    return (name, chrom, strand, txStart, txEnd, cdsStart,
+                cdsEnd, exons, name2, noncoding)
 
 if __name__ == '__main__':
     main()
