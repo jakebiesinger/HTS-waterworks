@@ -3,8 +3,8 @@
 
 """
 
-#  Current Version: 0.1-1-gc9504c5
-#  Last Modified: 2011-07-30 19:40
+#  Current Version: 0.1-7-g61825a4
+#  Last Modified: 2011-09-12 20:23
 
 import tempfile
 import re
@@ -18,24 +18,26 @@ from hts_waterworks.bootstrap import genome_path, cfg
 import hts_waterworks.bootstrap as bootstrap
 import hts_waterworks.mapping as mapping
 import hts_waterworks.call_peaks as call_peaks
+import hts_waterworks.pas_seq as pas_seq
 
 
 @jobs_limit(cfg.get('DEFAULT', 'max_throttled_jobs'), 'throttled')
 @follows(bootstrap.get_chrom_sizes)
-@transform(call_peaks.all_peak_caller_functions + mapping.all_mappers_output,
+@transform(call_peaks.all_peak_caller_functions + [pas_seq.merge_adjacent_reads] + mapping.all_mappers_output,
            suffix(''), '.clipped.sorted')
-def bed_clip_and_sort(in_bed, out_sorted):
+def clip_and_sort_peaks(in_bed, out_sorted):
     """Sort the bed file and constrain bed regions to chromosome sizes"""
     with tempfile.NamedTemporaryFile() as tmp_clipped:
         cmd = 'bedClip %s %s.chrom.sizes %s' % (in_bed, genome_path(),
                                                 tmp_clipped.name)
         sys_call(cmd)
         #cmd = 'bedSort %s %s' % (out_clipped, out_sorted)
-        cmd = 'sort -k1,1 -k2,2n -S 2G %s > %s' % (tmp_clipped.name, out_sorted)
+        cmd = r"sort -t $'\t' -k 1,1 -k 2,2n -S 2G %s > %s" % (tmp_clipped.name, out_sorted)
         sys_call(cmd)
 
 @active_if(cfg.getboolean('visualization', 'uniquefy_track'))
-@transform(bed_clip_and_sort, suffix(''), '.unique',
+@transform([clip_and_sort_peaks] + mapping.all_mappers_output, suffix(''),
+           '.unique',
            cfg.getint('visualization', 'uniquefy_track_max_reads'))
 def bed_uniquefy(in_bed, out_bed, max_reads):
     'Given a sorted bed file, remove tags that are on the same start, strand'
@@ -59,7 +61,8 @@ def bed_uniquefy(in_bed, out_bed, max_reads):
                         outfile.write(line)
                     minus_seen += 1
 
-@transform([bed_uniquefy, bed_clip_and_sort], suffix(''), '.colored')
+@transform([bed_uniquefy, clip_and_sort_peaks] +
+                    mapping.all_mappers_output, suffix(''), '.colored')
 def bed_color_strand(in_bed, out_bed):
     """Color the regions of the BED file by thier strand"""
     with open(in_bed) as infile:
@@ -80,10 +83,12 @@ def bed_to_bigbed(in_bed, out_bigbed):
                                                 genome_path(), out_bigbed)
     sys_call(cmd)
 
-@transform([bed_uniquefy, bed_clip_and_sort],
+@transform([bed_uniquefy, clip_and_sort_peaks] + mapping.all_mappers_output,
     regex('(.*mapped_reads).clipped.sorted(.unique|)'),
+    #suffix('.mapped_reads'),
     add_inputs(bootstrap.get_chrom_sizes),
     r'\1\2.bedgraph')
+    #r'.bedgraph')
 def bed_to_bedgraph(in_files, out_bedgraph):
     'extend reads to the full fragment length and create a bedgraph from them'
     in_bed, in_chrom_sizes = in_files
@@ -98,9 +103,12 @@ def bed_to_bedgraph(in_files, out_bedgraph):
 
 @active_if(cfg.getboolean('visualization', 'normalize_per_million'))
 @follows(bed_to_bedgraph)
-@transform([bed_uniquefy, bed_clip_and_sort],
+@transform([bed_uniquefy] + mapping.all_mappers_output,
         regex('(.*mapped_reads).clipped.sorted(.unique|)'),
-        add_inputs(r'\1\2.bedgraph'), r'\1\2.normalized.bedgraph')
+        #suffix('.mapped_reads'),
+        add_inputs(r'\1\2.bedgraph'),
+        r'\1\2.normalized.bedgraph')
+        #r'.normalized.bedgraph')
 def bedgraph_normalize_per_million(in_files, out_bedgraph):
     """Normalize bedgraph heights to tags per million mapping"""
     in_bed, in_bedgraph = in_files
@@ -140,6 +148,7 @@ def make_track_headers(in_files, out_header):
             else:
                 raise RuntimeError("Unrecognized file type: %s" % in_track)
             url = cfg.get('visualization', 'public_url_base') + '/' + in_track
+            print url
             # remove cruft from the names
             short_name = re.sub(r'(mapped_reads|clipped|sorted|colored|\.)+',
                                                             ' ', in_track)
