@@ -3,8 +3,8 @@
     module for mapping reads to the genome.
 """
 
-#  Current Version: 0.1-1-gc9504c5
-#  Last Modified: 2011-07-30 19:40
+#  Current Version: 0.1-5-gf1aa95a
+#  Last Modified: 2011-09-12 20:19
 
 import re
 import random
@@ -19,7 +19,8 @@ from pygr import worldbase, cnestedlist, seqdb
 
 from hts_waterworks.utils.ruffus_utils import (sys_call, main_logger as log,
                                            main_mutex as log_mtx)
-from hts_waterworks.bootstrap import genome_path, get_genome, cfg
+from hts_waterworks.bootstrap import (genome_path, get_genome, cfg,
+                                      get_chrom_sizes)
 import hts_waterworks.preprocessing as preprocessing
 
 #: the references to map against for this run (genome, transcriptome, etc)
@@ -411,7 +412,7 @@ def collapse_mapped_read_IDs(in_bed, out_bed):
     """
     with tempfile.NamedTemporaryFile() as tmp_sorted:
         # sort the file by chrom, start positions
-        cmd = 'sort -k1,1 -k2,2n -S 2G %s > %s' % (in_bed, tmp_sorted.name)
+        cmd = r"sort -t$'\t' -k 1,1 -k 2,2n -S 2G %s > %s" % (in_bed, tmp_sorted.name)
         sys_call(cmd)
         with open(out_bed, 'w') as outfile:
             p_chrom, p_start, p_name, p_strand = None, None, None, None
@@ -442,23 +443,23 @@ def remove_internal_priming(in_bed, out_bed):
             start, stop = int(start), int(stop)
             if strand == '+':
                 try:
-                    seq = str(wb_genome[chrom][start:stop])
+                    seq = str(wb_genome[chrom][start:stop]).upper()
                 except IndexError:
                     seq = ''
                 seq_A = seq.count('AAAAAA')
                 try:
-                    downstream = str(wb_genome[chrom][stop:stop+10])
+                    downstream = str(wb_genome[chrom][stop:stop+10]).upper()
                 except IndexError:
                     downstream = ''
                 down_A = downstream.count('A')
             else:
                 try:
-                    seq = str(wb_genome[chrom][start:stop])
+                    seq = str(wb_genome[chrom][start:stop]).upper()
                 except IndexError:
                     seq = ''
                 seq_A = seq.count('TTTTTT')
                 try:
-                    downstream = str(wb_genome[chrom][max(0,start-10):start])
+                    downstream = str(wb_genome[chrom][max(0,start-10):start]).upper()
                 except IndexError:
                     downstream = ''
                 down_A  = downstream.count('T')
@@ -467,3 +468,36 @@ def remove_internal_priming(in_bed, out_bed):
                 outfile.write(line)
 if cfg.getboolean('mapping', 'remove_internal_priming'):
     all_mappers_output = [remove_internal_priming]
+
+
+@active_if(cfg.getboolean('mapping', 'separate_by_strand'))
+@split(all_mappers_output, regex(r'(.*)\.mapped_reads$'),
+           [r'\1.plus.mapped_reads', r'\1.minus.mapped_reads'])
+def split_by_strand(in_bed, out_files):
+    """split mapped reads by which strand they are on"""
+    with open(in_bed) as infile:
+        with open(out_files[0], 'w') as plus_outfile:
+            with open(out_files[1], 'w') as minus_outfile:
+                for line in infile:
+                    strand = line.strip().split('\t')[5]
+                    if strand == '+':
+                        plus_outfile.write(line)
+                    else:
+                        minus_outfile.write(line)
+if cfg.getboolean('mapping', 'separate_by_strand'):
+    all_mappers_output = [split_by_strand]
+
+
+@jobs_limit(cfg.get('DEFAULT', 'max_throttled_jobs'), 'throttled')
+@follows(get_chrom_sizes)
+@transform(all_mappers_output, suffix('.mapped_reads'), '.sorted.mapped_reads')
+def bed_clip_and_sort(in_bed, out_sorted):
+    """Sort the bed file and constrain bed regions to chromosome sizes"""
+    with tempfile.NamedTemporaryFile() as tmp_clipped:
+        cmd = 'bedClip %s %s.chrom.sizes %s' % (in_bed, genome_path(),
+                                                tmp_clipped.name)
+        sys_call(cmd)
+        #cmd = 'bedSort %s %s' % (out_clipped, out_sorted)
+        cmd = r"sort -t $'\t' -k 1,1 -k 2,2n -S 2G %s > %s" % (tmp_clipped.name, out_sorted)
+        sys_call(cmd)
+all_mappers_output = [bed_clip_and_sort]
