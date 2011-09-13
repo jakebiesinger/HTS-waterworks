@@ -1,0 +1,221 @@
+
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>Getting Started &mdash; HTS-waterworks v0.1 documentation</title>
+    <link rel="stylesheet" href="_static/default.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '',
+        VERSION:     '0.1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <link rel="top" title="HTS-waterworks v0.1 documentation" href="index.html" />
+    <link rel="prev" title="Preliminaries" href="preliminaries.html" /> 
+  </head>
+  <body>
+    <div class="related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="right" >
+          <a href="preliminaries.html" title="Preliminaries"
+             accesskey="P">previous</a> |</li>
+        <li><a href="index.html">HTS-waterworks v0.1 documentation</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body">
+            
+  <div class="section" id="getting-started">
+<h1>Getting Started<a class="headerlink" href="#getting-started" title="Permalink to this headline">¶</a></h1>
+<div class="section" id="expose-the-reads">
+<h2>Expose the reads<a class="headerlink" href="#expose-the-reads" title="Permalink to this headline">¶</a></h2>
+<p>Once you have hts-waterworks and its dependencies installed, you will need to
+rename name your sequencing reads so that the hts-waterworks can see your files.</p>
+<p>All of your fastq-formatted short reads should end in <cite>.fastq</cite>. If you have
+ChIP-Seq reads, the treatment (immunoprecipitated reads) and control (IgG or
+whole cell extract) reads should start have the same name, but treatment should
+include the name <cite>treat</cite> while control should include the name <cite>control</cite>, as
+follows:</p>
+<div class="highlight-python"><pre>SREBP-1.treat.fastq     # immunoprecipitated reads
+SREBP-1.control.fastq   # IgG control</pre>
+</div>
+<p>You can perform several comparisons using the same IgG control (or using the
+same treatment data with different controls) by creating symbolic links to the
+files and changing the prefix. For example:</p>
+<div class="highlight-python"><pre>SREBP-1_vs_IgG.treat.fastq       # immunoprecipitated reads
+SREBP-1_vs_IgG.control.fastq     # IgG control
+SREBP-1_vs_Input.treat.fastq     # symbolic link to immunoprecipitated reads
+SREBP-1_vs_Input.control.fastq   # Whole cell extract control</pre>
+</div>
+<p>The prefix used in these files will follow throughout the analysis steps and
+a separate analysis will be performed on for each prefix.</p>
+</div>
+<div class="section" id="configure-the-analysis">
+<h2>Configure the analysis<a class="headerlink" href="#configure-the-analysis" title="Permalink to this headline">¶</a></h2>
+<p>To create the initial configuration file, you will need to run:</p>
+<div class="highlight-python"><pre>hts_waterworks.py -t bootstrap</pre>
+</div>
+<p>This will create a new configuration file as pipeline.cfg.</p>
+<p>There are many options available in pipeline.cfg, including selecting which one
+(or many) read mappers, peak callers, or motif discovery programs will be used.
+You can also update experimental details in this file (such as library tag
+size).</p>
+</div>
+<div class="section" id="run-the-analysis">
+<h2>Run the analysis<a class="headerlink" href="#run-the-analysis" title="Permalink to this headline">¶</a></h2>
+<p>To run all of the analysis that you&#8217;ve specified in the config file, you can
+use:</p>
+<div class="highlight-python"><pre>waterworks.py -t all_complete</pre>
+</div>
+<p><cite>all_complete</cite> will run every job in the analysis pipeline.  There are several
+other targets you may specify, such as:</p>
+<span class="target" id="module-waterworks"></span><p>waterworks.py
+Run a chip-seq pipeline, with output in the current directory.
+Place the raw reads at <a href="#id1"><span class="problematic" id="id2">*</span></a>.treat and <a href="#id3"><span class="problematic" id="id4">*</span></a>.control</p>
+<dl class="function">
+<dt id="waterworks.all_complete">
+<tt class="descclassname">waterworks.</tt><tt class="descname">all_complete</tt><big>(</big><em>_</em>, <em>out_sentinel</em><big>)</big><a class="reference internal" href="_modules/waterworks.html#all_complete"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#waterworks.all_complete" title="Permalink to this definition">¶</a></dt>
+<dd><p>HTS workflow complete</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="waterworks.bootstrap">
+<tt class="descclassname">waterworks.</tt><tt class="descname">bootstrap</tt><big>(</big><em>_</em>, <em>out_config</em><big>)</big><a class="reference internal" href="_modules/waterworks.html#bootstrap"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#waterworks.bootstrap" title="Permalink to this definition">¶</a></dt>
+<dd><p>create a configuration template</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="waterworks.expression">
+<tt class="descclassname">waterworks.</tt><tt class="descname">expression</tt><big>(</big><big>)</big><a class="reference internal" href="_modules/waterworks.html#expression"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#waterworks.expression" title="Permalink to this definition">¶</a></dt>
+<dd><p>expression/annotation steps complete</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="waterworks.map_reads">
+<tt class="descclassname">waterworks.</tt><tt class="descname">map_reads</tt><big>(</big><big>)</big><a class="reference internal" href="_modules/waterworks.html#map_reads"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#waterworks.map_reads" title="Permalink to this definition">¶</a></dt>
+<dd><p>read mapping steps complete</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="waterworks.motifs">
+<tt class="descclassname">waterworks.</tt><tt class="descname">motifs</tt><big>(</big><big>)</big><a class="reference internal" href="_modules/waterworks.html#motifs"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#waterworks.motifs" title="Permalink to this definition">¶</a></dt>
+<dd><p>motif discovery complete</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="waterworks.peak_calling">
+<tt class="descclassname">waterworks.</tt><tt class="descname">peak_calling</tt><big>(</big><big>)</big><a class="reference internal" href="_modules/waterworks.html#peak_calling"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#waterworks.peak_calling" title="Permalink to this definition">¶</a></dt>
+<dd><p>peak calling steps complete</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="waterworks.preprocess">
+<tt class="descclassname">waterworks.</tt><tt class="descname">preprocess</tt><big>(</big><big>)</big><a class="reference internal" href="_modules/waterworks.html#preprocess"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#waterworks.preprocess" title="Permalink to this definition">¶</a></dt>
+<dd><p>preprocessing/filtering steps complete</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="waterworks.visualization">
+<tt class="descclassname">waterworks.</tt><tt class="descname">visualization</tt><big>(</big><big>)</big><a class="reference internal" href="_modules/waterworks.html#visualization"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#waterworks.visualization" title="Permalink to this definition">¶</a></dt>
+<dd><p>visualization steps complete</p>
+</dd></dl>
+
+<ul>
+<li><dl class="first docutils">
+<dt><cite>preprocess</cite> which performs minimum quality thresholding, read clipping,</dt>
+<dd><p class="first last">and generates summary graphs of the reads</p>
+</dd>
+</dl>
+</li>
+<li><p class="first"><cite>map_reads</cite> which maps the reads using the mapper(s) of choice</p>
+</li>
+<li><p class="first"><cite>peak_calling</cite></p>
+</li>
+</ul>
+</div>
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar">
+        <div class="sphinxsidebarwrapper">
+  <h3><a href="index.html">Table Of Contents</a></h3>
+  <ul>
+<li><a class="reference internal" href="#">Getting Started</a><ul>
+<li><a class="reference internal" href="#expose-the-reads">Expose the reads</a></li>
+<li><a class="reference internal" href="#configure-the-analysis">Configure the analysis</a></li>
+<li><a class="reference internal" href="#run-the-analysis">Run the analysis</a></li>
+</ul>
+</li>
+</ul>
+
+  <h4>Previous topic</h4>
+  <p class="topless"><a href="preliminaries.html"
+                        title="previous chapter">Preliminaries</a></p>
+  <h3>This Page</h3>
+  <ul class="this-page-menu">
+    <li><a href="_sources/getting_started.txt"
+           rel="nofollow">Show Source</a></li>
+  </ul>
+<div id="searchbox" style="display: none">
+  <h3>Quick search</h3>
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" size="18" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="right" >
+          <a href="preliminaries.html" title="Preliminaries"
+             >previous</a> |</li>
+        <li><a href="index.html">HTS-waterworks v0.1 documentation</a> &raquo;</li> 
+      </ul>
+    </div>
+    <div class="footer">
+        &copy; Copyright 2011, Jacob Biesinger.
+      Created using <a href="http://sphinx.pocoo.org/">Sphinx</a> 1.0.7.
+    </div>
+  </body>
+</html>

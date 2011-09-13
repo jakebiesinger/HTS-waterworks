@@ -1,0 +1,180 @@
+
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>waterworks &mdash; HTS-waterworks v0.1 documentation</title>
+    <link rel="stylesheet" href="../_static/default.css" type="text/css" />
+    <link rel="stylesheet" href="../_static/pygments.css" type="text/css" />
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../',
+        VERSION:     '0.1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../_static/jquery.js"></script>
+    <script type="text/javascript" src="../_static/underscore.js"></script>
+    <script type="text/javascript" src="../_static/doctools.js"></script>
+    <link rel="top" title="HTS-waterworks v0.1 documentation" href="../index.html" />
+    <link rel="up" title="Module code" href="index.html" /> 
+  </head>
+  <body>
+    <div class="related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li><a href="../index.html">HTS-waterworks v0.1 documentation</a> &raquo;</li>
+          <li><a href="index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body">
+            
+  <h1>Source code for waterworks</h1><div class="highlight"><pre>
+<span class="c">#!/usr/bin/env python</span>
+<span class="sd">&quot;&quot;&quot;waterworks.py</span>
+<span class="sd">   Run a chip-seq pipeline, with output in the current directory.</span>
+<span class="sd">   Place the raw reads at *.treat and *.control</span>
+
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="c">#  Current Version: 0.1-3-g65e147c</span>
+<span class="c">#  Last Modified: 2011-09-12 20:15</span>
+
+<span class="c"># --- imports ---</span>
+<span class="kn">from</span> <span class="nn">ruffus</span> <span class="kn">import</span> <span class="n">follows</span><span class="p">,</span> <span class="n">files</span>
+
+<span class="kn">from</span> <span class="nn">hts_waterworks.utils.ruffus_utils</span> <span class="kn">import</span> <span class="p">(</span><span class="n">ruffus_main</span><span class="p">,</span> <span class="n">ruffus_opt_parser</span><span class="p">,</span>
+                                               <span class="n">touch</span><span class="p">)</span>
+<span class="kn">import</span> <span class="nn">hts_waterworks.preprocessing</span> <span class="kn">as</span> <span class="nn">preprocessing</span>
+<span class="kn">import</span> <span class="nn">hts_waterworks.mapping</span> <span class="kn">as</span> <span class="nn">mapping</span>
+<span class="kn">import</span> <span class="nn">hts_waterworks.call_peaks</span> <span class="kn">as</span> <span class="nn">call_peaks</span>
+<span class="kn">import</span> <span class="nn">hts_waterworks.visualize</span> <span class="kn">as</span> <span class="nn">visualize</span>
+<span class="kn">import</span> <span class="nn">hts_waterworks.annotation</span> <span class="kn">as</span> <span class="nn">annotation</span>
+<span class="kn">import</span> <span class="nn">hts_waterworks.pas_seq</span> <span class="kn">as</span> <span class="nn">pas_seq</span>
+<span class="kn">import</span> <span class="nn">hts_waterworks.motif_discovery</span> <span class="kn">as</span> <span class="nn">motif_discovery</span>
+<span class="kn">from</span> <span class="nn">hts_waterworks.bootstrap</span> <span class="kn">import</span> <span class="n">CONFIG_FILENAME</span><span class="p">,</span> <span class="n">CONFIG_TEMPLATE</span>
+
+
+<span class="nd">@files</span><span class="p">(</span><span class="bp">None</span><span class="p">,</span> <span class="n">CONFIG_FILENAME</span><span class="p">)</span>
+<div class="viewcode-block" id="bootstrap"><a class="viewcode-back" href="../getting_started.html#waterworks.bootstrap">[docs]</a><span class="k">def</span> <span class="nf">bootstrap</span><span class="p">(</span><span class="n">_</span><span class="p">,</span> <span class="n">out_config</span><span class="p">):</span>
+    <span class="s">&#39;create a configuration template&#39;</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">out_config</span><span class="p">,</span> <span class="s">&#39;w&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">outfile</span><span class="p">:</span>
+        <span class="n">outfile</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">CONFIG_TEMPLATE</span><span class="p">)</span>
+</div>
+<span class="nd">@follows</span><span class="p">(</span><span class="n">preprocessing</span><span class="o">.</span><span class="n">final_output</span><span class="p">,</span> <span class="n">preprocessing</span><span class="o">.</span><span class="n">read_length_histogram</span><span class="p">,</span>
+         <span class="n">preprocessing</span><span class="o">.</span><span class="n">quality_boxplot</span><span class="p">,</span> <span class="n">preprocessing</span><span class="o">.</span><span class="n">quality_nuc_dist</span><span class="p">)</span>
+<div class="viewcode-block" id="preprocess"><a class="viewcode-back" href="../getting_started.html#waterworks.preprocess">[docs]</a><span class="k">def</span> <span class="nf">preprocess</span><span class="p">():</span>
+    <span class="sd">&quot;&quot;&quot;preprocessing/filtering steps complete&quot;&quot;&quot;</span>
+    <span class="k">pass</span>
+
+</div>
+<span class="nd">@follows</span><span class="p">(</span><span class="o">*</span><span class="n">mapping</span><span class="o">.</span><span class="n">all_mappers_output</span><span class="p">)</span>
+<div class="viewcode-block" id="map_reads"><a class="viewcode-back" href="../getting_started.html#waterworks.map_reads">[docs]</a><span class="k">def</span> <span class="nf">map_reads</span><span class="p">():</span>
+    <span class="sd">&quot;&quot;&quot;read mapping steps complete&quot;&quot;&quot;</span>
+    <span class="k">pass</span>
+
+</div>
+<span class="nd">@follows</span><span class="p">(</span><span class="o">*</span><span class="n">call_peaks</span><span class="o">.</span><span class="n">all_peak_caller_functions</span><span class="p">)</span>
+<div class="viewcode-block" id="peak_calling"><a class="viewcode-back" href="../getting_started.html#waterworks.peak_calling">[docs]</a><span class="k">def</span> <span class="nf">peak_calling</span><span class="p">():</span>
+    <span class="sd">&quot;&quot;&quot;peak calling steps complete&quot;&quot;&quot;</span>
+    <span class="k">pass</span>
+
+
+<span class="c"># visualization</span></div>
+<span class="nd">@follows</span><span class="p">(</span><span class="n">visualize</span><span class="o">.</span><span class="n">deploy_track_files</span><span class="p">)</span>
+<div class="viewcode-block" id="visualization"><a class="viewcode-back" href="../getting_started.html#waterworks.visualization">[docs]</a><span class="k">def</span> <span class="nf">visualization</span><span class="p">():</span>
+    <span class="sd">&quot;&quot;&quot;visualization steps complete&quot;&quot;&quot;</span>
+    <span class="k">pass</span>
+
+</div>
+<span class="nd">@follows</span><span class="p">(</span><span class="n">annotation</span><span class="o">.</span><span class="n">gene_overlap</span><span class="p">,</span> <span class="n">annotation</span><span class="o">.</span><span class="n">gene_ontology</span><span class="p">,</span>
+         <span class="n">annotation</span><span class="o">.</span><span class="n">find_nearby_genes</span><span class="p">,</span> <span class="n">annotation</span><span class="o">.</span><span class="n">draw_expression_ks</span><span class="p">)</span>
+<div class="viewcode-block" id="expression"><a class="viewcode-back" href="../getting_started.html#waterworks.expression">[docs]</a><span class="k">def</span> <span class="nf">expression</span><span class="p">():</span>
+    <span class="sd">&quot;&quot;&quot;expression/annotation steps complete&quot;&quot;&quot;</span>
+    <span class="k">pass</span>
+
+</div>
+<span class="nd">@follows</span><span class="p">(</span><span class="n">motif_discovery</span><span class="o">.</span><span class="n">motif_enrichment_genomic</span><span class="p">,</span>
+         <span class="n">motif_discovery</span><span class="o">.</span><span class="n">motif_enrichment_control</span><span class="p">,</span>
+         <span class="n">motif_discovery</span><span class="o">.</span><span class="n">consensus_enrichment</span><span class="p">,</span>
+         <span class="n">motif_discovery</span><span class="o">.</span><span class="n">motif_presence_sorted_peaks</span><span class="p">,</span>
+         <span class="n">motif_discovery</span><span class="o">.</span><span class="n">make_seq_logo</span>
+         <span class="c">#motif_discovery.run_stamp,</span>
+         <span class="p">)</span>
+<div class="viewcode-block" id="motifs"><a class="viewcode-back" href="../getting_started.html#waterworks.motifs">[docs]</a><span class="k">def</span> <span class="nf">motifs</span><span class="p">():</span>
+    <span class="sd">&quot;&quot;&quot;motif discovery complete&quot;&quot;&quot;</span>
+    <span class="k">pass</span>
+
+</div>
+<span class="nd">@follows</span><span class="p">(</span><span class="n">preprocess</span><span class="p">,</span> <span class="n">map_reads</span><span class="p">,</span> <span class="n">peak_calling</span><span class="p">,</span> <span class="n">visualization</span><span class="p">,</span> <span class="n">expression</span><span class="p">,</span> <span class="n">motifs</span><span class="p">,</span>
+         <span class="n">pas_seq</span><span class="o">.</span><span class="n">test_differential_polya</span><span class="p">)</span>
+<span class="nd">@files</span><span class="p">(</span><span class="bp">None</span><span class="p">,</span> <span class="s">&#39;all_complete.ready&#39;</span><span class="p">)</span>
+<div class="viewcode-block" id="all_complete"><a class="viewcode-back" href="../getting_started.html#waterworks.all_complete">[docs]</a><span class="k">def</span> <span class="nf">all_complete</span><span class="p">(</span><span class="n">_</span><span class="p">,</span> <span class="n">out_sentinel</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;HTS workflow complete&quot;&quot;&quot;</span>
+    <span class="n">touch</span><span class="p">(</span><span class="n">out_sentinel</span><span class="p">)</span>
+
+
+<span class="c"># --- main ---</span></div>
+<span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="s">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="n">parser</span> <span class="o">=</span> <span class="n">ruffus_opt_parser</span><span class="p">()</span>
+    <span class="n">opts</span><span class="p">,</span> <span class="n">args</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">()</span>
+    <span class="n">ruffus_main</span><span class="p">(</span><span class="n">opts</span><span class="p">,</span> <span class="n">args</span><span class="p">)</span>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none">
+  <h3>Quick search</h3>
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" size="18" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li><a href="../index.html">HTS-waterworks v0.1 documentation</a> &raquo;</li>
+          <li><a href="index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+    <div class="footer">
+        &copy; Copyright 2011, Jacob Biesinger.
+      Created using <a href="http://sphinx.pocoo.org/">Sphinx</a> 1.0.7.
+    </div>
+  </body>
+</html>
