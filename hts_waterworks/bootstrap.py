@@ -2,8 +2,8 @@
     module to set up a pipeline program
 """
 
-#  Current Version: 0.1-1-gc9504c5
-#  Last Modified: 2011-07-30 19:40
+#  Current Version: 0.1-4-g6334e5a
+#  Last Modified: 2011-09-12 20:18
 
 import StringIO
 from ConfigParser import ConfigParser
@@ -99,6 +99,7 @@ collapse_mapped_read_IDs = False
 remove_internal_priming = False
 
 map_to_transcriptome = False
+separate_by_strand = False
 
 [peaks]
 downsample_reads = True
@@ -181,6 +182,7 @@ merge_adjacent_reads = False
 merge_window_width = 40
 merge_num_iterations = 2
 
+compare_window_width = 24
 """
 
 # global configuration
