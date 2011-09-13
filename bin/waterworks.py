@@ -5,8 +5,8 @@
 
 """
 
-#  Current Version: 0.1-1-gc9504c5
-#  Last Modified: 2011-07-30 19:40
+#  Current Version: 0.1-3-g65e147c
+#  Last Modified: 2011-09-12 20:15
 
 # --- imports ---
 from ruffus import follows, files
@@ -74,7 +74,8 @@ def motifs():
     pass
 
 
-@follows(preprocess, map_reads, peak_calling, visualization, expression, motifs)
+@follows(preprocess, map_reads, peak_calling, visualization, expression, motifs,
+         pas_seq.test_differential_polya)
 @files(None, 'all_complete.ready')
 def all_complete(_, out_sentinel):
     """HTS workflow complete"""
