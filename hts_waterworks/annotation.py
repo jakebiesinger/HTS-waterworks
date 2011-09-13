@@ -4,8 +4,8 @@
 
 """
 
-#  Current Version: 0.1-1-gc9504c5
-#  Last Modified: 2011-07-30 19:40
+#  Current Version: 0.1-6-g966196d
+#  Last Modified: 2011-09-12 20:21
 
 import shlex
 
@@ -133,8 +133,9 @@ def find_nearby_genes(in_files, out_genes):
 
 #@jobs_limit(cfg.getint('DEFAULT', 'max_throttled_jobs'), 'throttled')
 @follows(refseq_genes_to_regions, convert_gtf_genes_to_bed)
-@split(call_peaks.all_peak_caller_functions + ['*.custom.peaks'],
-         regex(r'(.*).peaks'),
+@split(call_peaks.all_peak_caller_functions + ['*.custom.peaks'] + ['*.merged.mapped_reads'],
+         #regex(r'(.*).peaks'),
+         regex(r'(.*)'),
          add_inputs('*_genes', get_chrom_sizes),
          [r'\1.genes.overlap',
           r'\1.genes.overlap.gene_structure_pie.png',
@@ -144,7 +145,7 @@ def gene_overlap(in_files, out_files):
     """Check the overlap of peaks with a set of genes"""
     in_bed, in_gene_info, in_chrom_sizes = in_files
     out_gene_overlap = out_files[0]
-    args = shlex.split('''%s %s %s --genome=%s --random_shuffles=1000
+    args = shlex.split('''%s %s %s --genome=%s --random_shuffles=0
                        --pie_output=%s.gene_structure_pie.png
                        --plot_dist_to_txStart=%s.dist_to_txStart.png
                        --bar_output=%s.fold_enrichment_vs_control.png
@@ -198,21 +199,41 @@ def make_expression_ks(in_files, out_pattern):
     #print gene_expr_sorted
     for in_peaks in in_peaks_list:
         print in_peaks
-        genes_with_peaks = set(line.strip().split('\t')[9] for line in open(in_peaks))
+        genes_with_peaks = {}
+        for line in open(in_peaks):
+            fields = line.strip().split('\t')
+            peak_loc = '%s:%s-%s' % tuple(fields[:3])
+            gene_id = fields[9]
+            
+            genes_with_peaks[gene_id] = peak_loc
         print genes_with_peaks
         #print in_peaks, genes_with_peaks
         with open(in_expression + '.with_peaks.%s.ks_data' %
                                             in_peaks, 'w') as outfile:
+            outfile.write('\t'.join(['gene_id', 'expression_val','has_peak',
+                                     'peak_loc']) + '\n')
             for gene_id, expr_val in gene_expr_sorted:
                 has_peak = 1 if gene_id in genes_with_peaks else 0
-                outfile.write('%s\t%s\t%s\n' % (gene_id, expr_val, has_peak))
+                outfile.write('\t'.join(map(str, [gene_id, expr_val, has_peak,
+                                genes_with_peaks[gene_id] if gene_id in
+                                        genes_with_peaks else 'None'])) + '\n')
+        # make data file with data reversed
+        with open(in_expression + '.with_peaks.%s.reversed.ks_data' %
+                                            in_peaks, 'w') as outfile:
+            outfile.write('\t'.join(['gene_id', 'expression_val','has_peak',
+                                     'peak_loc']) + '\n')
+            for gene_id, expr_val in reversed(gene_expr_sorted):
+                has_peak = 1 if gene_id in genes_with_peaks else 0
+                outfile.write('\t'.join(map(str, [gene_id, expr_val, has_peak,
+                                genes_with_peaks[gene_id] if gene_id in
+                                        genes_with_peaks else 'None'])) + '\n')
 
 @transform(make_expression_ks, suffix('.ks_data'), '.ks_plot.png')
 def draw_expression_ks(in_data, out_png):
     """KS-test to see if the 1's and 0's from input is non-uniform"""
 
     R_script = r"""
-d<-read.table(file="%(in_data)s", header=FALSE, sep="\t")
+d<-read.table(file="%(in_data)s", header=TRUE, sep="\t")
 # This does the actual KS test
 N<-dim(d)[1]
 a<-d[1:N,3]
