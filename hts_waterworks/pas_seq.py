@@ -4,8 +4,8 @@
     experiments.
 """
 
-#  Current Version: 0.1-3-g65e147c
-#  Last Modified: 2011-09-12 20:15
+#  Current Version: 0.1-11-gb4838b9
+#  Last Modified: 2011-09-13 17:28
 
 import itertools
 import subprocess
@@ -143,7 +143,7 @@ def merge_adjacent_reads(in_bed, out_pattern, window_width, iterations,
            r'\1.norm_mil.\2')
 def pileup_normalize_per_million(in_pileup, out_pileup):
     """Normalize pileup reads to tags per million mapping"""
-    total_bed = sum(1 for l in open(in_pileup))
+    total_bed = float(sum(1 for l in open(in_pileup)))
     with open(in_pileup) as infile:
         with open(out_pileup, 'w') as outfile:
             for line in infile:
@@ -169,9 +169,9 @@ short_name = lambda x: x.replace('hg19.refseq_genes.', '').split('.trim_regex')[
            r'\1.*.polya.*.*_test',
            cfg.getint('PAS-Seq', 'compare_window_width'),
            r'\1.%s.vs.%s.polya.%s.fisher_test',
-           r'\1.%s.vs.%s.polya.%s.t_test')
+           r'\1.%s.vs.%s.polya.%s.t_test', cfg.getfloat('PAS-Seq', 'min_score_for_site'))
 def test_differential_polya(in_files, out_pattern, max_dist, out_template,
-                            ttest_template):
+                            ttest_template, min_score):
     """Test for differential poly-adenylation from PAS-seq pileups.
     
     Performs all pairwise tests of merged poly-A sites across all experiments.
@@ -227,7 +227,7 @@ def test_differential_polya(in_files, out_pattern, max_dist, out_template,
                 #                               cdsEnd, exons, name2, noncoding)
                 #print read_groups
                 expr_vals = dict(group_adjacent_reads(read_groups, max_dist,
-                                                      min_score=5))
+                                                      min_score=min_score))
                 
                 #print expr_vals
                 # sort locs s.t. those closest to the gene TSS come first
@@ -258,9 +258,9 @@ def test_differential_polya(in_files, out_pattern, max_dist, out_template,
                             compare_type = 'utr'
                         else:
                             compare_type = 'non_utr'
-                    if (expr_vals[cur_loc][exp1] == 0 and 
-                            expr_vals[cur_loc][exp2] == 0):
-                        continue  # skip both experiments have 0 expression
+                    if (expr_vals[cur_loc][exp1] < min_score and 
+                            expr_vals[cur_loc][exp2] < min_score):
+                        continue  # both experiments have very little expression
                     if (('plus' in cur_reads[exp1] and
                             'minus' in cur_reads[exp2]) or
                         ('minus' in cur_reads[exp1] and
@@ -485,7 +485,8 @@ def plot_closest_polyA_db(in_files, out_files, max_dists):
     furthest = max(max_dists)
     for line in p.stdout:
         try:
-            count, dist = map(int, line.strip().split('\t'))
+            count, dist = map(lambda x: int(round(float(x))),
+                                            line.strip().split('\t'))
         except Exception as e:
             print 'error on line:'
             print line
@@ -506,15 +507,16 @@ def plot_closest_polyA_db(in_files, out_files, max_dists):
     pyplot.savefig(out_dist)
     
     # plot the count of reads at each polyA site for several thresholds
-    pyplot.figure()
+    pyplot.figure(figsize=(8,13))
     pyplot.subplot(len(max_dists), 1, 1)
     pyplot.title('Number of reads at PolyA sites')
+    pyplot.ylabel('Frequency (Count)')
     for index, max_d in enumerate(max_dists):
         pyplot.subplot(len(max_dists), 1, index + 1)
         pyplot.hist(counts_at_threshold[max_d],
-                    bins=min(counts_at_threshold[max_d], 50))
+                    bins=min(counts_at_threshold[max_d], 50),
+                    range=(0,1000))
         pyplot.xlabel('# reads, max_dist=%s' % max_d)
-        pyplot.ylabel('Frequency (Count)')
     pyplot.savefig(out_count)
 
 

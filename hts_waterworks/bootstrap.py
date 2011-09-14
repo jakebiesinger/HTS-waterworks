@@ -2,8 +2,8 @@
     module to set up a pipeline program
 """
 
-#  Current Version: 0.1-4-g6334e5a
-#  Last Modified: 2011-09-12 20:18
+#  Current Version: 0.1-11-gb4838b9
+#  Last Modified: 2011-09-13 17:28
 
 import StringIO
 from ConfigParser import ConfigParser
@@ -183,6 +183,7 @@ merge_window_width = 40
 merge_num_iterations = 2
 
 compare_window_width = 24
+min_score_for_site = 5
 """
 
 # global configuration
