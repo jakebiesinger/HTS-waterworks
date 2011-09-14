@@ -4,8 +4,8 @@
 
 """
 
-#  Current Version: 0.1-6-g966196d
-#  Last Modified: 2011-09-12 20:21
+#  Current Version: 0.1-12-gee1eab9
+#  Last Modified: 2011-09-13 17:29
 
 import shlex
 
@@ -186,7 +186,7 @@ def make_expression_ks(in_files, out_pattern):
     # gene_expr = dict((line.strip().split('\t')[3],default_val)
     #                               for line in open(in_all_genes))
     gene_expr = {}
-    print in_expression
+    #print in_expression
     for line in open(in_expression):
         try:
             gene_id, expr_val = line.strip().split('\t')
@@ -195,14 +195,14 @@ def make_expression_ks(in_files, out_pattern):
         gene_expr[gene_id] = expr_val
     # sort the genes by expression value (low to high)
     gene_expr_sorted = sorted(gene_expr.items(), key=lambda x:float(x[1]))
-    print gene_expr_sorted[:20]
+    #print gene_expr_sorted[:20]
     #print gene_expr_sorted
     for in_peaks in in_peaks_list:
-        print in_peaks
+        #print in_peaks
         genes_with_peaks = {}
         for line in open(in_peaks):
             fields = line.strip().split('\t')
-            peak_loc = '%s:%s-%s' % tuple(fields[:3])
+            peak_loc = '%s:%s-%s\t%s' % tuple(fields[:3] + [fields[4]])
             gene_id = fields[9]
             
             genes_with_peaks[gene_id] = peak_loc
@@ -211,22 +211,41 @@ def make_expression_ks(in_files, out_pattern):
         with open(in_expression + '.with_peaks.%s.ks_data' %
                                             in_peaks, 'w') as outfile:
             outfile.write('\t'.join(['gene_id', 'expression_val','has_peak',
-                                     'peak_loc']) + '\n')
+                                     'peak_loc', 'peak_score']) + '\n')
             for gene_id, expr_val in gene_expr_sorted:
                 has_peak = 1 if gene_id in genes_with_peaks else 0
                 outfile.write('\t'.join(map(str, [gene_id, expr_val, has_peak,
                                 genes_with_peaks[gene_id] if gene_id in
-                                        genes_with_peaks else 'None'])) + '\n')
+                                        genes_with_peaks else 'None\tNA'])) + '\n')
         # make data file with data reversed
         with open(in_expression + '.with_peaks.%s.reversed.ks_data' %
                                             in_peaks, 'w') as outfile:
             outfile.write('\t'.join(['gene_id', 'expression_val','has_peak',
-                                     'peak_loc']) + '\n')
+                                     'peak_loc', 'peak_score']) + '\n')
             for gene_id, expr_val in reversed(gene_expr_sorted):
                 has_peak = 1 if gene_id in genes_with_peaks else 0
                 outfile.write('\t'.join(map(str, [gene_id, expr_val, has_peak,
                                 genes_with_peaks[gene_id] if gene_id in
-                                        genes_with_peaks else 'None'])) + '\n')
+                                        genes_with_peaks else 'None\tNA'])) + '\n')
+
+@transform(make_expression_ks, suffix('.ks_data'), '.expr_corr.png')
+def draw_expression_correlation(in_data, out_png):
+    """Correlation test to see if the correlation between expression values and
+    peak quality (score column from peak file).
+    """
+
+    R_script = r"""
+png('%(out_png)s')
+d<-read.table(file="%(in_data)s", header=TRUE, sep="\t");
+library(lattice);
+r <- cor.test(d$expression_val, d$peak_score)
+plot(d$expression_val, d$peak_score, xlab="expression value", ylab="peak score")
+title(paste("R^2 = ", r$estimate, ", p-value = ", r$p.value));
+dev.off()
+""" % dict(in_data=in_data, out_png=out_png)
+    #print R_script
+    r = pyper.R()
+    r(R_script)
 
 @transform(make_expression_ks, suffix('.ks_data'), '.ks_plot.png')
 def draw_expression_ks(in_data, out_png):
@@ -291,7 +310,6 @@ dev.off()
     #print R_script
     r = pyper.R()
     r(R_script)
-
 
 
 
