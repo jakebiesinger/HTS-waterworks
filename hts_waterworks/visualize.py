@@ -3,8 +3,8 @@
 
 """
 
-#  Current Version: 0.1-7-g61825a4
-#  Last Modified: 2011-09-12 20:23
+#  Current Version: 0.1-14-g7ce1dcc
+#  Last Modified: 2011-09-20 20:37
 
 import tempfile
 import re
@@ -23,7 +23,7 @@ import hts_waterworks.pas_seq as pas_seq
 
 @jobs_limit(cfg.get('DEFAULT', 'max_throttled_jobs'), 'throttled')
 @follows(bootstrap.get_chrom_sizes)
-@transform(call_peaks.all_peak_caller_functions + [pas_seq.merge_adjacent_reads] + mapping.all_mappers_output,
+@transform(call_peaks.all_peak_caller_functions + [pas_seq.remove_internal_priming_again] + mapping.all_mappers_output,
            suffix(''), '.clipped.sorted')
 def clip_and_sort_peaks(in_bed, out_sorted):
     """Sort the bed file and constrain bed regions to chromosome sizes"""
@@ -103,7 +103,7 @@ def bed_to_bedgraph(in_files, out_bedgraph):
 
 @active_if(cfg.getboolean('visualization', 'normalize_per_million'))
 @follows(bed_to_bedgraph)
-@transform([bed_uniquefy] + mapping.all_mappers_output,
+@transform([bed_uniquefy, clip_and_sort_peaks] + mapping.all_mappers_output,
         regex('(.*mapped_reads).clipped.sorted(.unique|)'),
         #suffix('.mapped_reads'),
         add_inputs(r'\1\2.bedgraph'),

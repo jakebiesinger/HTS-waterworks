@@ -4,23 +4,22 @@
     experiments.
 """
 
-#  Current Version: 0.1-11-gb4838b9
-#  Last Modified: 2011-09-13 17:28
+#  Current Version: 0.1-14-g7ce1dcc
+#  Last Modified: 2011-09-20 20:37
 
 import itertools
 import subprocess
 
 from ruffus import (transform, split, collate, regex, suffix, add_inputs,
-                        follows, files)
+                        follows, files, jobs_limit)
 from ruffus.task import active_if
 import fisher
 import pyper
 import scipy.stats
 from matplotlib import pyplot
 
-from hts_waterworks.utils.ruffus_utils import (
-                                           sys_call, main_logger as log,
-                                           main_mutex as log_mtx)
+from hts_waterworks.utils.ruffus_utils import (sys_call, main_logger as log,
+                                               main_mutex as log_mtx)
 import hts_waterworks.mapping as mapping
 from hts_waterworks.annotation import get_refseq_genes
 from hts_waterworks.bootstrap import cfg
@@ -35,16 +34,29 @@ def get_polyA_DB(_, out_db, genome_build):
     cmd = cmd % (genome_build, out_db)
     sys_call(cmd, file_log=False)
 
+@jobs_limit(cfg.getint('DEFAULT', 'max_throttled_jobs'), 'throttled')
+@transform(mapping.all_mappers_output, suffix('.mapped_reads'),
+           '.overlap.mapped_reads', cfg.getint('PAS-Seq', 'min_read_count'))
+def remove_nonoverlapping_reads(in_bed, out_bed, min_read_count):
+    """
+    Remove mapped reads that don't overlap with at least *min_read_count* reads
+    """
+    cmd = "intersectBed -wa -c -a %s -b %s | awk '$(NF) >= %s' |" \
+          r"cut -f 1,2,3,4,5,6 > %s" % (in_bed, in_bed, min_read_count + 1,
+                                        out_bed)
+    sys_call(cmd, file_log=False)
 
 
 @active_if(cfg.getboolean('PAS-Seq', 'merge_adjacent_reads'))
-@split(mapping.all_mappers_output, regex('(.*).mapped_reads$'),
+#@split(mapping.all_mappers_output, regex('(.*).mapped_reads$'),
+@split(remove_nonoverlapping_reads, regex('(.*).mapped_reads$'),
            [r'\1.merged.mapped_reads', r'\1.merged.pileup_reads'],
            cfg.getint('PAS-Seq', 'merge_window_width'),
            cfg.getint('PAS-Seq', 'merge_num_iterations'),
-           r'\1.merged.mapped_reads', r'\1.merged.pileup_reads')
+           r'\1.merged.mapped_reads', r'\1.merged.pileup_reads',
+           cfg.getint('PAS-Seq', 'min_read_count'))
 def merge_adjacent_reads(in_bed, out_pattern, window_width, iterations,
-                         out_merged, out_pileup):
+                         out_merged, out_pileup, min_read_count):
     """Reassign read ends to a weighted average of adjacent reads"""
     # helper functions for parsing bed files
     filter_lines = lambda l: l.strip() and (not l.startswith('#') or \
@@ -102,15 +114,16 @@ def merge_adjacent_reads(in_bed, out_pattern, window_width, iterations,
                     print line
                     print p_stops, p_names, p_strands
                     raise
-                avg = int(round(sum(p_stops) / float(len(p_stops))))
-                # write out reads in this cluster, using avg as coordinate
-                outfile.writelines('\t'.join([p_chrom, str(max(0, avg-1)), str(avg),
-                                         n_name, '0', n_strand]) + '\n'
-                              for n_name, n_strand in zip(p_names, p_strands))
-                if outfile_pileup is not None:
-                    outfile_pileup.write('\t'.join([p_chrom, str(max(0, avg-1)), str(avg),
-                                           p_names[0], str(len(p_stops)),
-                                           p_strands[0]]) + '\n')
+                if len(p_stops) > min_read_count:
+                    avg = int(round(sum(p_stops) / float(len(p_stops))))
+                    # write out reads in this cluster, using avg as coordinate
+                    outfile.writelines('\t'.join([p_chrom, str(max(0, avg-1)), str(avg),
+                                             n_name, '0', n_strand]) + '\n'
+                                  for n_name, n_strand in zip(p_names, p_strands))
+                    if outfile_pileup is not None:
+                        outfile_pileup.write('\t'.join([p_chrom, str(max(0, avg-1)), str(avg),
+                                               p_names[0], str(len(p_stops)),
+                                               p_strands[0]]) + '\n')
                 # reset our record
                 p_chrom = chrom
                 p_stops = [stop]
@@ -138,38 +151,41 @@ def merge_adjacent_reads(in_bed, out_pattern, window_width, iterations,
         outfile.close()
 
 
-@active_if(cfg.getboolean('visualization', 'normalize_per_million'))
-@transform(merge_adjacent_reads, regex(r'(.*)\.(.*$)'),
-           r'\1.norm_mil.\2')
-def pileup_normalize_per_million(in_pileup, out_pileup):
-    """Normalize pileup reads to tags per million mapping"""
-    total_bed = float(sum(1 for l in open(in_pileup)))
-    with open(in_pileup) as infile:
-        with open(out_pileup, 'w') as outfile:
-            for line in infile:
-                fields = line.strip().split('\t')
-                norm_score = float(fields[4]) / (total_bed / 1e6)
-                outfile.write('\t'.join(fields[:4] + [str(norm_score)] + fields[5:]) + '\n')
-
-@follows(pileup_normalize_per_million)
-@transform(pileup_normalize_per_million if \
-                cfg.getboolean('visualization', 'normalize_per_million') else \
-                merge_adjacent_reads , regex(r'(.*)\.(.*$)'),
-           r'\1.no_prime.\2')
+@transform(merge_adjacent_reads , regex(r'(.*)\.(.*$)'), r'\1.no_prime.\2')
 def remove_internal_priming_again(in_bed, out_bed):
     mapping.remove_internal_priming(in_bed, out_bed)
 
 
+@active_if(cfg.getboolean('visualization', 'normalize_per_million'))
+@transform(remove_internal_priming_again, regex(r'(.*)\.(pileup_reads$)'),
+           r'\1.norm_mil.\2')
+def pileup_normalize_per_million(in_pileup, out_pileup):
+    """Normalize pileup reads to tags per million mapping"""
+    total_reads = sum(float(l.strip().split('\t')[4])
+                                    for l in open(in_pileup))
+    with open(in_pileup) as infile:
+        with open(out_pileup, 'w') as outfile:
+            for line in infile:
+                fields = line.strip().split('\t')
+                norm_score = float(fields[4]) / (total_reads / 1e6)
+                outfile.write('\t'.join(fields[:4] + [str(norm_score)] +
+                                        fields[5:]) + '\n')
+
+
 short_name = lambda x: x.replace('hg19.refseq_genes.', '').split('.trim_regex')[0] + ('.plus' if 'plus' in x else '.minus')
 
-@follows(remove_internal_priming_again)
-#@split(get_refseq_genes, regex(r'(.*)'), add_inputs(remove_internal_priming_again),
-@split(get_refseq_genes, regex(r'(.*)'), add_inputs('*.norm_mil.no_prime.pileup_reads'),
+@follows(remove_internal_priming_again, pileup_normalize_per_million)
+@split(get_refseq_genes, regex(r'(.*)'),
+       add_inputs(pileup_normalize_per_million if
+                  cfg.getboolean('visualization', 'normalize_per_million') else
+                  remove_internal_priming_again),
+#@split(get_refseq_genes, regex(r'(.*)'), add_inputs('*.no_prime.norm_mil.pileup_reads'),
 #@split('hg19.refseq_genes.extend3utr', regex(r'(.*)'), add_inputs('*.pileup_reads'),
            r'\1.*.polya.*.*_test',
            cfg.getint('PAS-Seq', 'compare_window_width'),
            r'\1.%s.vs.%s.polya.%s.fisher_test',
-           r'\1.%s.vs.%s.polya.%s.t_test', cfg.getfloat('PAS-Seq', 'min_score_for_site'))
+           r'\1.%s.vs.%s.polya.%s.t_test',
+           cfg.getfloat('PAS-Seq', 'min_score_for_site'))
 def test_differential_polya(in_files, out_pattern, max_dist, out_template,
                             ttest_template, min_score):
     """Test for differential poly-adenylation from PAS-seq pileups.
@@ -307,13 +323,6 @@ def test_differential_polya(in_files, out_pattern, max_dist, out_template,
 
 
 
-
-                    
-
-                
-                
-                
-                
                 
                 # for each combination of experiment, do a fisher's test
                 for exp1, exp2 in itertools.combinations(
@@ -345,11 +354,27 @@ def test_differential_polya(in_files, out_pattern, max_dist, out_template,
                             else:
                                 compare_type = 'non_utr'
 
-                        if ((expr_vals[ups_loc][exp1] == 0 and
-                                expr_vals[downs_loc][exp1] == 0) or
-                            (expr_vals[ups_loc][exp2] == 0 and
-                                expr_vals[downs_loc][exp2] == 0)):
-                            continue  # skip where either experiment has 0 expression
+                        if (expr_vals[ups_loc][exp1] < min_score or
+                            expr_vals[downs_loc][exp1] < min_score or
+                            expr_vals[ups_loc][exp2] < min_score or
+                            expr_vals[downs_loc][exp2] < min_score):
+                            # skip where any site for any experiment has too
+                            # low expression at both locations
+                            continue
+                        if ((expr_vals[ups_loc][exp1] < min_score and
+                                expr_vals[downs_loc][exp1] < min_score) or
+                            (expr_vals[ups_loc][exp2] < min_score and
+                                expr_vals[downs_loc][exp2] < min_score)):
+                            # skip where experiments have too low expression at
+                            # both locations
+                            continue
+                        if ((expr_vals[ups_loc][exp1] < min_score and
+                                expr_vals[ups_loc][exp2] < min_score) or
+                            (expr_vals[downs_loc][exp1] < min_score and
+                                expr_vals[downs_loc][exp2] < min_score)):
+                            # skip where locations have too low expression in
+                            # both experiments
+                            continue
                         if (('plus' in cur_reads[exp1] and
                                 'minus' in cur_reads[exp2]) or
                             ('minus' in cur_reads[exp1] and
@@ -400,22 +425,95 @@ def test_differential_polya(in_files, out_pattern, max_dist, out_template,
     for filedict in out_files.values():
         for fileout in filedict.values():
             fileout.close()
+    
+
+@transform(test_differential_polya, suffix(''), r'\1.no_last_exon.\2')
+def remove_terminal_exon(in_test, out_test):
+    loc_re = r"'(chr\w+)', (\d+), (\d+)"
+    for line in open(in_test):
+        fields = line.strip().split('\t')
+        if 't_test' in in_test:
+            # only the 2nd column is a location
+            chrom, start, stop = loc_re.search(fields[1]).groups()
+            locs.append((chrom, start, stop))
+        else:
+            chrom, start, stop = loc_re.search(fields[1]).groups()
+            locs.append((chrom, start, stop))
+            chrom, start, stop = loc_re.search(fields[2]).groups()
+            locs.append((chrom, start, stop))
+        for loc in locs:
+            if loc in []:   # TODO!!
+                pass  
+
+@collate(test_differential_polya,
+         #regex(r'(.*)\.(?P<strand>plus|minus)\.(.*)\.(?P=strand)\.(.*)'), r'\1.\3.\5')
+         regex(r'(.*)\.(?P<strand>plus|minus)\.(.*)\.(?P=strand)\.(.*)'), r'\1.\3.\4')
+def merge_strands(in_files, out_merged):
+    """concatenate the strand-specific analyses for plotting"""
+    # output the first file in its entirety
+    cmd = 'cat %s > %s ' % (in_files[0], out_merged)
+    sys_call(cmd, file_log=False)
+    # skip the header for remaining files
+    for f in in_files[1:]:
+        cmd = 'sed 1d %s >> %s' % (f, out_merged)
+        sys_call(cmd, file_log=False)
+
+@collate(merge_strands,
+         regex(r'(.*\.polya)\.(.*)\.(t_test|fisher_test)'), r'\1.\3')
+def merge_comparison_types(in_files, out_merged):
+    """concatenate the comparison types together for plotting"""
+    cmd = 'cat %s > %s ' % (in_files[0], out_merged)
+    sys_call(cmd, file_log=False)
+    # skip the header for remaining files
+    for f in in_files[1:]:
+        cmd = 'sed 1d %s >> %s' % (f, out_merged)
+        sys_call(cmd, file_log=False)
 
 
-#@collate(test_differential_polya,
-#         regex(r'(.*)\.(plus|minus)\.(.*)\.(plus|minus)\.(.*)'), r'\1.\3.\5')
-#def merge_strands(in_files, out_merged):
-#    """concatenate the strand-specific analyses for plotting"""
-#    sys_call('cat ' + ' '.join([f for f in in_files]) + ' > %s' % out_merged,
-#                file_log=False)
+@collate(merge_strands,
+         regex(r'(.*refseq_genes)\.(\w+)_(?P<exp>\w+)\.vs\.(\w+)_(?P=exp)\.(.*fisher_test)'),
+         r'\1.\2.vs.\4.agreement.\5')
+def intersect_comparison_types(in_files, out_merged):
+    """
+    Report those sites that are significant in ALL libraries for a given
+    experiment
+    
+    The collate is formed s.t. significance must be attained across library
+    types.  i.e.,
+    Job = [[hg19.refseq_genes.CHX_CA.vs.DMSO_CA.polya.independent.fisher_test,
+            hg19.refseq_genes.CHX_GA.vs.DMSO_GA.polya.independent.fisher_test]
+    -> hg19.refseq_genes.CHX.vs.DMSO.agreement.polya.independent.fisher_test]
+    
+    which does not include CHX_CA.vs.DMSO_GA etc
+    """
+    site_pvals = {}
+    CA_index = 0
+    GA_index = 1
+    for exp in in_files:
+        for line in open(exp):
+            fields = line.strip().split('\t')
+            if fields[-1] == 'fisher_p_two_sided':
+                continue
+            loc = tuple(fields[1:3])
+            pval = float(fields[-1])
+            if loc not in site_pvals:
+                site_pvals[loc] = []
+            site_pvals[loc].append(float(pval))
+    with open(out_merged, 'w') as outfile:
+        for loc, pvals in site_pvals.iteritems():
+            if all(p < .05 for p in pvals) and len(pvals) == len(in_files):
+                outfile.write('\t'.join(['%s:%s-%s' %tuple(l.replace("'",'').replace(' ','').split(',')) for l in loc] + [str(pvals)]) + '\n')
 
 
-@transform(test_differential_polya, suffix(''), '.ratio_sites.png')
+@transform([merge_strands, merge_comparison_types], suffix(''), '.ratio_sites.png')
 def plot_differential_polya(in_fisher, out_png):
     """plot a scatter plot of the log-expression difference of polya sites"""
     lhs, rhs = in_fisher.split('vs.')
     lhs, rhs = short_name(lhs), short_name(rhs)
-    compare_type = in_fisher.replace('.fisher_test', '').split('polya.')[1]
+    try:
+        compare_type = in_fisher.replace('.fisher_test', '').split('polya.')[1]
+    except:
+        compare_type = 'ALL'
     R_script = r"""
 library(lattice)
 d<-read.table(file="%(in_fisher)s", header=TRUE, sep="\t")
@@ -427,7 +525,7 @@ exp1_distal = d$exp1_downstream_count[sig_sites]
 exp2_proximal = d$exp2_upstream_count[sig_sites]
 exp2_distal = d$exp2_downstream_count[sig_sites]
 
-plot(log2(d$exp1_upstream_count/d$exp2_upstream_count), log2(d$exp1_downstream_count/d$exp2_downstream_count), cex=.8, col='lightgray', pch=20, xlab="%(xlab)s", ylab="%(ylab)s", main="Significant sites for %(lhs)s vs. %(rhs)s in %(compare_type)s")
+plot(log2(d$exp1_upstream_count/d$exp2_upstream_count), log2(d$exp1_downstream_count/d$exp2_downstream_count), cex=.8, col='lightgray', pch=20, xlab="%(xlab)s", ylab="%(ylab)s", main="Significant sites for %(lhs)s vs. %(rhs)s in %(compare_type)s", sub=paste("Significant sites:", sum(sig_sites), "/", dim(d)[1]))
 points(log2(exp1_proximal/exp2_proximal), log2(exp1_distal/exp2_distal), col='red', cex=.8, pch=20)
 
 dev.off()
@@ -441,12 +539,15 @@ dev.off()
     r(R_script)
 
 
-@transform(test_differential_polya, suffix(''), '.scatter.png')
+@transform([merge_strands, merge_comparison_types], suffix(''), '.scatter.png')
 def plot_scatter_polya(in_fisher, out_png):
     """plot a scatter plot of the expression of polya sites"""
     lhs, rhs = in_fisher.split('vs.')
     lhs, rhs = short_name(lhs), short_name(rhs)
-    compare_type = in_fisher.replace('.fisher_test', '').split('polya.')[1]
+    try:
+        compare_type = in_fisher.replace('.fisher_test', '').split('polya.')[1]
+    except:
+        compare_type = 'ALL'
     R_script = r"""
 library(lattice)
 d<-read.table(file="%(in_fisher)s", header=TRUE, sep="\t")
@@ -454,6 +555,11 @@ png('%(out_png)s')
 
 exp1 <- c(d$exp1_upstream_count, d$exp1_downstream_count)
 exp2 <- c(d$exp2_upstream_count, d$exp2_downstream_count)
+
+sig_sites <- d$fisher_p_two_sided < .05
+
+exp1_sig = c(d$exp1_upstream_count[sig_sites], d$exp1_downstream_count[sig_sites])
+exp2_sig = c(d$exp2_upstream_count[sig_sites], d$exp2_downstream_count[sig_sites])
 
 plot(log2(exp1), log2(exp2), cex=.8, col='lightgray', pch=20, xlab="%(xlab)s", ylab="%(ylab)s", main="All sites for %(lhs)s vs. %(rhs)s in %(compare_type)s", sub=paste("R^2 is ", cor(exp1, exp2)))
 
