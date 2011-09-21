@@ -4,8 +4,8 @@
 
 """
 
-#  Current Version: 0.1-12-gee1eab9
-#  Last Modified: 2011-09-13 17:29
+#  Current Version: 0.1-13-gb6710ca
+#  Last Modified: 2011-09-20 20:35
 
 import shlex
 
@@ -202,11 +202,12 @@ def make_expression_ks(in_files, out_pattern):
         genes_with_peaks = {}
         for line in open(in_peaks):
             fields = line.strip().split('\t')
-            peak_loc = '%s:%s-%s\t%s' % tuple(fields[:3] + [fields[4]])
+            peak_loc = '%s:%s-%s\t%s' % tuple(fields[:3] +
+                                    [fields[4] if fields[4] != '.' else 'NA'])
             gene_id = fields[9]
             
             genes_with_peaks[gene_id] = peak_loc
-        print genes_with_peaks
+        #print genes_with_peaks
         #print in_peaks, genes_with_peaks
         with open(in_expression + '.with_peaks.%s.ks_data' %
                                             in_peaks, 'w') as outfile:
