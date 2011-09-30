@@ -2,8 +2,6 @@
     module for filtering out low quality reads, trimming poly-A tails, etc
 """
 
-#  Current Version: 0.0
-#  Last Modified: 2011-07-22 16:52
 
 import re
 

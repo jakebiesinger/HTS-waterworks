@@ -3,9 +3,6 @@
 
 """
 
-#  Current Version: 0.1-14-g7ce1dcc
-#  Last Modified: 2011-09-20 20:37
-
 import tempfile
 import re
 

@@ -2,8 +2,6 @@
     Module for calling peaks using a variety of peak callers
 """
 
-#  Current Version: 0.0
-#  Last Modified: 2011-07-22 16:52
 
 import re
 import itertools

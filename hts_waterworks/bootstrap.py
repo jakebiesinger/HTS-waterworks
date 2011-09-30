@@ -2,8 +2,6 @@
     module to set up a pipeline program
 """
 
-#  Current Version: 0.1-11-gb4838b9
-#  Last Modified: 2011-09-13 17:28
 
 import StringIO
 from ConfigParser import ConfigParser
@@ -181,6 +179,7 @@ ks_test_default_value = 1.0
 merge_adjacent_reads = False
 merge_window_width = 40
 merge_num_iterations = 2
+min_read_count = 0
 
 compare_window_width = 24
 min_score_for_site = 5

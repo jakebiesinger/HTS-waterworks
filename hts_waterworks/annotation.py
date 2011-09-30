@@ -4,9 +4,6 @@
 
 """
 
-#  Current Version: 0.1-13-gb6710ca
-#  Last Modified: 2011-09-20 20:35
-
 import shlex
 
 from ruffus import (transform, suffix, files, follows, regex, split, collate,

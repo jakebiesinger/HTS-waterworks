@@ -3,9 +3,6 @@
     module for mapping reads to the genome.
 """
 
-#  Current Version: 0.1-5-gf1aa95a
-#  Last Modified: 2011-09-12 20:19
-
 import re
 import random
 import os
