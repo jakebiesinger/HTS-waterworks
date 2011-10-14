@@ -20,7 +20,7 @@ import hts_waterworks.pas_seq as pas_seq
 
 @jobs_limit(cfg.get('DEFAULT', 'max_throttled_jobs'), 'throttled')
 @follows(bootstrap.get_chrom_sizes)
-@transform(call_peaks.all_peak_caller_functions + [pas_seq.remove_internal_priming_again] + mapping.all_mappers_output,
+@transform(call_peaks.all_peak_caller_functions + [pas_seq.remove_terminal_exon] + mapping.all_mappers_output,
            suffix(''), '.clipped.sorted')
 def clip_and_sort_peaks(in_bed, out_sorted):
     """Sort the bed file and constrain bed regions to chromosome sizes"""

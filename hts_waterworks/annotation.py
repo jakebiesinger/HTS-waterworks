@@ -91,8 +91,21 @@ def refseq_genes_to_bed(in_genes, out_bed):
                 outfile.write('\t'.join([chrom, start, stop, name,
                                          '0', strand]) + '\n')
 
+
+    promoter_out = open(outNameBase + '.promoter%s_ext%s' % (promoterSize, promoterExtend), 'w')
+    downstream_out = open(outNameBase + '.down%s_ext%s' % (downstreamSize, downstreamExtend), 'w')
+    utr5_out = open(outNameBase + '.utr5', 'w')
+    utr3_out = open(outNameBase + '.utr3', 'w')
+    exon_out = open(outNameBase + '.exon', 'w')
+    intron_out = open(outNameBase + '.intron', 'w')
+    tss_out = open(outNameBase + '.tss', 'w')
+    noncoding_out = open(outNameBase + '.noncoding', 'w')
+
 @follows(get_refseq_genes, convert_gtf_genes_to_bed)
-@split('*_genes', regex(r'(.*)_genes$'), r'\1_genes.*')
+@split('*_genes', regex(r'(.*)_genes$'),
+       [r'\1_genes.promoter*_ext*', r'\1_genes.down*_ext*', r'\1_genes.utr5',
+        r'\1_genes.utr3', r'\1_genes.exon', r'\1_genes.intron', r'\1_genes.tss',
+        r'\1_genes.noncoding'])
 def refseq_genes_to_regions(in_genes, out_pattern):
     """make regions (promoter, downstream, 5UTR, etc) from refseq_genes"""
     args = shlex.split('''%s --promoter_size=%s --promoter_extend=%s
