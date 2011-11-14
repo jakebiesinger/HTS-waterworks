@@ -67,16 +67,18 @@ def trim_regex(in_fastq, out_fastq, trim_pattern):
     with open(in_fastq) as infile:
         with open(out_fastq, 'w') as outfile:
             for header, seq, qual in parseFastq(infile):
-                m = pattern.search(seq)
-                if m:
+                matches = [m.span() for m in pattern.finditer(seq)]
+                if len(matches) > 0:
                     # match to re found--
-                    #   trim it and add the trimmed sequence to the read ID
-                    header = seq[m.start():] + '_' + header
-                    seq = seq[:m.start()]
-                    qual = qual[:m.start()]
-                if len(seq) >= 4:  # TODO: add adjustable min length
-                    outfile.write('@%s\n%s\n+%s\n%s\n' % (header, seq,
-                                                          header, qual))
+                    #   trim the right-most hit and add the trimmed sequence to the read ID
+                    m = matches[-1]
+                    header = seq[m[0]:] + '_' + header
+                    seq = seq[:m[0]]
+                    qual = qual[:m[0]]
+                if len(matches) > 0 or not cfg.getboolean('filtering', 'require_regex'):
+                    if len(seq) >= 10:  # TODO: add adjustable min length
+                        outfile.write('@%s\n%s\n+%s\n%s\n' % (header, seq,
+                                                              header, qual))
 if cfg.get('filtering', 'trim_regex') != '':
     final_output = trim_regex
     prev_suffix = ''
@@ -113,9 +115,7 @@ def read_length_histogram(in_fastq, out_hist):
     # pyplot.bar(lengths.keys(), lengths.values())
     sys_call(cmd)
 
-#@transform(['*.fastq', filter_artifacts, filter_min_quality],
-#    suffix(''), '.qual_stats')
-@transform(['*.fastq', '*.fastq_illumina', final_output],
+@transform(['*.fastq_illumina' if cfg.getboolean('filtering', 'convert_sanger_to_illumina') else '*.fastq', final_output],
         suffix(''), '.qual_stats')
 def quality_stats(in_fastq, out_stats):
     'aggregate quality score statistics for reads'
@@ -135,4 +135,22 @@ def quality_nuc_dist(in_stats, out_dist):
     cmd = 'fastx_nucleotide_distribution_graph.sh -t %s -i %s -o %s' % (
         in_stats, in_stats, out_dist)
     sys_call(cmd)
+
+@merge([clip_adapter, trim_reads, trim_regex,
+        filter_artifacts, filter_min_quality], 'fastq.wikisummary')
+def summarize_fastq_reads(in_fastq, out_summary):
+    """Summarize fastq line counts"""
+    with open(out_summary, 'w') as outfile:
+        outfile.write("""
+{| class="wikitable"
+|+ Summary of raw read counts
+!scope="col" | Dataset
+!scope="col" | Number of raw reads
+|-
+""")
+        for infile in in_fastq:
+            for count, line in enumerate(open(infile)):
+                pass
+            outfile.write("| %s || %s\n|-\n" % (infile, count//4))
+        outfile.write('|}\n')
 
