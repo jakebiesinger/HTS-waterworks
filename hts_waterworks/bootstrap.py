@@ -60,6 +60,7 @@ trim_end = 50
 # trim everything to the right of this regular expression, including the re match
 # leave blank if no trimming is to take place
 trim_regex =
+require_regex = False
 
 filter_artifacts = False
 
@@ -159,6 +160,10 @@ sampling_exclude_N = True
 
 motif_zscores = 4.29
 
+# do motif discovery etc on reads without an IGG control
+discover_read_pileup_motifs = False
+
+consensus_sequence =
 
 [genes]
 nearby_genes_max_dist = 20000
@@ -176,13 +181,22 @@ download_refseq = True
 ks_test_default_value = 1.0
 
 [PAS-Seq]
+test_differential_polya = False
+
 merge_adjacent_reads = False
 merge_window_width = 40
 merge_num_iterations = 2
 min_read_count = 0
 
+remove_nonoverlapping_reads = False
+
 compare_window_width = 24
 min_score_for_site = 5
+
+
+[CLIP-seq]
+truncate_to_starts = False
+truncate_to_starts_offset = -1
 """
 
 # global configuration

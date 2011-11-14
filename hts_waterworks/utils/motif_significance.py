@@ -74,6 +74,14 @@ def main(argv=None):
         allKeys = [opts.motif_key]
     else:
         allKeys = allMotifs.keys()
+    
+    # write a header
+    if opts.output_file:
+        outstr = '\t'.join(['peaks', 'motif', 'threshold_z', 'vs_bg_normal_Z',
+                            'hypergeo_pvalue', 'fgMatches', 'fgSize',
+                            'fgMatches/fgSize', 'bgMatches', 'bgSize'])
+        open(opts.output_file, 'w').write(outstr)
+
     for motifKey in allKeys:
         print '# Loaded motif %s...' % motifKey
         pwm = allMotifs[motifKey]

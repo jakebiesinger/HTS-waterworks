@@ -35,6 +35,10 @@ degenTable = {'A':'A', 'C':'C', 'G':'G', 'T':'T',
               'N':'ACGT'
               }
 
+def consensus_to_regex(consensus):
+    """Convert consensus sequence to regular expression"""
+    return ''.join(['[%s]' % degenTable[l] for l in consensus])
+
 iupac2matrix = dict(zip('ACGTRYMKWSBDHVN',
             [ [1,0,0,0], #A
                 [0,1,0,0], #C

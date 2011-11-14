@@ -12,7 +12,7 @@ import scipy.stats
 import scipy.special
 
 
-from sampling import calc_pwm_bg_dist
+from sampling import calc_pwm_bg_dist, weighted_sample
 from hts_waterworks.utils.common import makeNormalSeq, iupac2matrix
 
 class Motif(motility.PWM):
@@ -62,18 +62,19 @@ class Motif(motility.PWM):
             return self._threshold
         if not zscore:
             zscore = self._zscore
-        return self._mean + self._sd * zscore
+        thresh_for_z = self._mean + self._sd * zscore
+        return min(self.max_score(), thresh_for_z)
     
-    def generate_sites(self):
+    def generate_sites(self, to_generate):
         "Generate random sites from the Motif"
         columns = []
-        for row in pwm.matrix:
+        for row in self.matrix:
             print row
             if min(row) < 0:
                 row = [2**(el + math.log(.25, 2)) for el in row]
                 row = [el / sum(row) for el in row]
             print row
-            l = list(sampling.weighted_sample(zip(row, 'ACGT'), to_generate))
+            l = list(weighted_sample(zip(row, 'ACGT'), to_generate))
             random.shuffle(l)
             columns.append(l)
         sites = [''.join(letter) for letter in zip(*columns)]
@@ -288,7 +289,7 @@ def reverseComplement(matrix):
     
 def parseMotifsFromTransfac(transfacStr):
     'Parse a transfac string and return a dictionary of motifs'
-    blockStart = re.compile(r'^AC\s+(\w+)')
+    blockStart = re.compile(r'^AC\s+([\w\d.\- ]+)')
     blockEnd = re.compile('^//')
     blankLine = re.compile(r'(^\s*$)|(^XX)')
     matrixStart = re.compile('^P0')
@@ -313,7 +314,7 @@ def parseMotifsFromTransfac(transfacStr):
         else:
             startMatch = blockStart.search(line)  # AC  ####   start of an entry
             if startMatch:
-                motifID = startMatch.groups()[0]
+                motifID = startMatch.groups()[0].replace(' ', '_')
                 curMotif = {'AC':[motifID]}
             elif not blankLine.search(line):  # not a blank line or just XX
                 if matrixStart.search(line):
@@ -454,6 +455,24 @@ def parseMemeMotifs(meme_file, logOdds=True):
         raise RuntimeError("Didn't parse any motifs from %s", meme_file)
     return allMatrices
 
+def parseDremeMotifs(dreme_str, logOdds=True):
+    raise NotImplementedError("parseDremeMotifs is not complete!")
+    if logOdds:
+        blockStart = 'log-odds matrix:'
+    else:
+        blockStart = 'letter-probability matrix:'
+    motif_start = re.compile(
+r'''^MOTIF (?P<consensus>\w+).*$
+.*alength= (?P<alength>\d+) w= (?P<w>\d+) nsites= (?P<nsites>\d+) E= (?P<e_val>.*)$
+(^\d[\d. ]+$)+''' % blockStart, re.MULTILINE)
+    inMotif = False
+    inBlock = False
+    inHeader = False
+    allMatrices = {}
+    curMatrix = []
+    for line in dreme_str.split('\n'):
+        if not inMotif:
+            m = motif_start.search(line)
 
 def parse_xms_motifs(filename):
     next = False
