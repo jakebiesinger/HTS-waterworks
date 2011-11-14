@@ -5,11 +5,17 @@
 """
 
 import shlex
+import tempfile
+import glob
+import os
 
 from ruffus import (transform, suffix, files, follows, regex, split, collate,
                     add_inputs)
 from ruffus.task import active_if
 import pyper
+from matplotlib import pyplot
+import scipy as sp
+import bx.bbi.bigwig_file as bigwig_file
 
 from hts_waterworks.utils.ruffus_utils import sys_call, touch
 from hts_waterworks.utils.common import parseGTF, flatten
@@ -17,8 +23,9 @@ import hts_waterworks.utils.makeGeneStructure as makeGeneStructure
 import hts_waterworks.utils.bedOverlapGeneStructure as bedOverlapGeneStructure
 from hts_waterworks.bootstrap import cfg, get_chrom_sizes
 import hts_waterworks.call_peaks as call_peaks
+import hts_waterworks.mapping as mapping
 
-@transform('*.gtfgenes', suffix('.gtfgenes'), '_genes')
+@transform('%s.*.gtfgenes' % cfg.get('DEFAULT', 'genome'), suffix('.gtfgenes'), '_genes')
 def convert_gtf_genes_to_bed(in_gtf, out_bed):
     """convert the gene GTF files into "standard" UCSC format
     from multi-line GTF to:
@@ -79,7 +86,7 @@ def get_refseq_genes(_, out_genes):
     sys_call('mv refGene.txt %s' % out_genes)
 
 @follows(get_refseq_genes, convert_gtf_genes_to_bed)
-@transform('*_genes', suffix('_genes'), '_genes.all')
+@transform('%s.*_genes' % cfg.get('DEFAULT', 'genome'), suffix('_genes'), '_genes.all')
 def refseq_genes_to_bed(in_genes, out_bed):
     """convert refseq genes file to BED format"""
     with open(in_genes) as infile:
@@ -91,18 +98,8 @@ def refseq_genes_to_bed(in_genes, out_bed):
                 outfile.write('\t'.join([chrom, start, stop, name,
                                          '0', strand]) + '\n')
 
-
-    promoter_out = open(outNameBase + '.promoter%s_ext%s' % (promoterSize, promoterExtend), 'w')
-    downstream_out = open(outNameBase + '.down%s_ext%s' % (downstreamSize, downstreamExtend), 'w')
-    utr5_out = open(outNameBase + '.utr5', 'w')
-    utr3_out = open(outNameBase + '.utr3', 'w')
-    exon_out = open(outNameBase + '.exon', 'w')
-    intron_out = open(outNameBase + '.intron', 'w')
-    tss_out = open(outNameBase + '.tss', 'w')
-    noncoding_out = open(outNameBase + '.noncoding', 'w')
-
 @follows(get_refseq_genes, convert_gtf_genes_to_bed)
-@split('*_genes', regex(r'(.*)_genes$'),
+@split('%s.*_genes' % cfg.get('DEFAULT', 'genome'), regex(r'(.*)_genes$'),
        [r'\1_genes.promoter*_ext*', r'\1_genes.down*_ext*', r'\1_genes.utr5',
         r'\1_genes.utr3', r'\1_genes.exon', r'\1_genes.intron', r'\1_genes.tss',
         r'\1_genes.noncoding'])
@@ -121,12 +118,12 @@ def refseq_genes_to_regions(in_genes, out_pattern):
 @follows(get_refseq_genes, convert_gtf_genes_to_bed)
 @collate(call_peaks.all_peak_caller_functions + ['*.custom.peaks'],
          regex(r'(.+)\.treat\.(.+)\.peaks'), 
-         #add_inputs('*_genes.all'), r'\1.treat.\2.peaks.nearby.genes')
-         add_inputs('*_genes.tss'), r'\1.treat.\2.peaks.nearby.genes')
+         add_inputs('%s*_genes.all' % cfg.get('DEFAULT', 'genome')),  r'\1.treat.\2.peaks.nearby.genes')
+         #add_inputs('%s*_genes.tss' % cfg.get('DEFAULT', 'genome')), r'\1.treat.\2.peaks.nearby.genes')
 def find_nearby_genes(in_files, out_genes):
     """report which genes are within a certain distance of a peak"""
     in_peaks, in_genes = in_files[0]
-    tmp_output = in_peaks+'.nearby_genes_tmp'
+    tmp_output = tempfile.NamedTemporaryFile(delete=False).name
     cmd = 'closestBed -a %s -b %s -t first -d > %s' % (in_peaks,
                                                        in_genes, tmp_output)
     sys_call(cmd)
@@ -135,18 +132,112 @@ def find_nearby_genes(in_files, out_genes):
             for line in infile:
                 if not line:
                     continue
-                fields = line.split('\t')
-                dist = int(fields[12])
-                if dist <= cfg.getint('genes', 'nearby_genes_max_dist'):
+                fields = line.strip().split('\t')
+                dist = int(fields[-1])
+                if abs(dist) <= cfg.getint('genes', 'nearby_genes_max_dist'):
                     outfile.write(line)
+    os.unlink(tmp_output)
 
+@active_if(False)
+@files(None, '%s.microRNA.dist_compare' % cfg.get('DEFAULT', 'genome'))
+def get_microRNA(_, out_mirna):
+    """retrieve microRNA genes from UCSC"""
+    url = 'http://hgdownload.cse.ucsc.edu/goldenPath/%s/database/wgRna.txt.gz'
+    url = url % cfg.get('DEFAULT', 'genome')
+    sys_call('wget -N -P . %s' % url)
+    sys_call('gunzip -f wgRna.txt.gz')
+    with open(out_mirna, 'w') as outfile:
+        for line in open('wgRna.txt'):
+            (bin, chrom, start, end, name, score,
+             strand, thickStart, thickEnd, type) = line.strip().split('\t')
+            outfile.write('\t'.join([chrom, start, end, name + '_' + type, score, strand]) + '\n')
+
+
+#def overlap_wiggle_features
+
+# TODO add sample_genome_like_peaks
+@active_if(len(glob.glob('*.dist_compare')) > 0)
+@split(call_peaks.all_peak_caller_functions + ['*.custom.peaks'],
+           regex(r'(.*)\.peaks'), add_inputs(get_chrom_sizes, '*.dist_compare'),
+           [r'\1.peaks.dist_to.*.dist'], r'\1.peaks.dist_to.%s.dist')
+def get_nearest_features(in_files, _, out_pattern):
+    """Calculate the distance from each peak to the nearest features"""
+    print in_files
+    print out_pattern
+    in_peaks, chrom_sizes, all_features = in_files[0], in_files[1], in_files[2:]
+    if len(all_features) == 0:
+        raise RuntimeError("No features present to compare to!")
+    # get distances for each feature
+    tmp_output = tempfile.NamedTemporaryFile(delete=False)
+    for in_feature in all_features:
+        distances = []
+        all_distances = []
+        cmd = 'closestBed -a %s -b %s -t first -D ref > %s' % (in_peaks, in_feature,
+                                                           tmp_output.name)
+        sys_call(cmd, file_log=False)
+        with open(tmp_output.name) as infile:
+            for line in infile:
+                if not line:
+                    continue
+                fields = line.strip().split('\t')
+                dist = int(fields[-1])
+                #if int(fields[1]) < int(fields[7]):
+                #    dist *= -1
+                distances.append(dist)
+        all_distances.append(distances)
+
+        cmd = 'shuffleBed -chrom -i %s -g %s | closestBed -a stdin -b %s -t first -D ref > %s' % (
+                            in_peaks, chrom_sizes, in_feature, tmp_output.name)
+        sys_call(cmd, file_log=False)
+        distances = []
+        with open(tmp_output.name) as infile:
+            for line in infile:
+                if not line:
+                    continue
+                fields = line.strip().split('\t')
+                dist = int(fields[-1])
+                #if int(fields[1]) < int(fields[7]):
+                #    dist *= -1
+                distances.append(dist)
+        all_distances.append(distances)
+        with open(out_pattern % in_feature, 'w') as outfile:
+            outfile.write('\t'.join([in_feature, 'Random']) + '\n')  # header
+            for d in zip(*all_distances):
+                outfile.write('\t'.join(map(str, d)) + '\n') # distance as column
+    os.unlink(tmp_output.name)
+
+@transform(get_nearest_features, suffix('.dist'),
+           '.dist.png')
+def plot_nearest_features(in_distances, out_png, window_size=20):
+    """Plot a density of the distance to the nearest features"""
+    R_script = r"""
+png('%(out_png)s')
+d<-read.table(file="%(in_data)s", header=TRUE, sep="\t");
+d = d / 1000;
+library(lattice);
+plot(density(unlist(d[1])[unlist(d[1]) < %(window_size)s & unlist(d[1]) > -%(window_size)s]), main="Feature densities around peaks", xlab="Distance (kb)", ylab="Density", xlim=c(-%(window_size)s,%(window_size)s))
+index = 1
+r = rainbow(length(d))
+for (i in d) {
+    i = i[i < %(window_size)s & i > -%(window_size)s]
+    lines(density(i, from=-%(window_size)s, to=%(window_size)s), col=r[index])
+    index = index + 1
+}
+legend("topleft", legend=names(d), col=r, lty=1)
+dev.off()
+""" % dict(in_data=in_distances, out_png=out_png, window_size=window_size)
+    print R_script
+    r = pyper.R()
+    r(R_script)
+    
 
 #@jobs_limit(cfg.getint('DEFAULT', 'max_throttled_jobs'), 'throttled')
 @follows(refseq_genes_to_regions, convert_gtf_genes_to_bed)
-@split(call_peaks.all_peak_caller_functions + ['*.custom.peaks'] + ['*.merged.mapped_reads'],
+#@split(call_peaks.all_peak_caller_functions + ['*.custom.peaks'] + ['*.merged.mapped_reads'],
+@split(['*.custom.peaks'] + ['*.merged.mapped_reads'],
          #regex(r'(.*).peaks'),
          regex(r'(.*)'),
-         add_inputs('*_genes', get_chrom_sizes),
+         add_inputs('%s.*_genes' % cfg.get('DEFAULT', 'genome'), get_chrom_sizes),
          [r'\1.genes.overlap',
           r'\1.genes.overlap.gene_structure_pie.png',
           r'\1.genes.overlap.gene_structure_pie_random.png',
@@ -197,7 +288,7 @@ def make_expression_ks(in_files, out_pattern):
     #                               for line in open(in_all_genes))
     gene_expr = {}
     #print in_expression
-    for line in open(in_expression):
+    for line in [line for line in open(in_expression) if "N/A" not in line]:
         try:
             gene_id, expr_val = line.strip().split('\t')
         except:
@@ -212,8 +303,8 @@ def make_expression_ks(in_files, out_pattern):
         genes_with_peaks = {}
         for line in open(in_peaks):
             fields = line.strip().split('\t')
-            peak_loc = '%s:%s-%s\t%s' % tuple(fields[:3] +
-                                    [fields[4] if fields[4] != '.' else 'NA'])
+            peak_loc = '%s:%s-%s\t%s\t%s' % tuple(fields[:3] +
+                                    [fields[4] if fields[4] != '.' else 'NA', fields[3] if fields[3] != '.' else 'NA'])
             gene_id = fields[9]
             
             genes_with_peaks[gene_id] = peak_loc
@@ -222,22 +313,110 @@ def make_expression_ks(in_files, out_pattern):
         with open(in_expression + '.with_peaks.%s.ks_data' %
                                             in_peaks, 'w') as outfile:
             outfile.write('\t'.join(['gene_id', 'expression_val','has_peak',
-                                     'peak_loc', 'peak_score']) + '\n')
+                                     'peak_loc', 'peak_score', 'peak_name']) + '\n')
             for gene_id, expr_val in gene_expr_sorted:
                 has_peak = 1 if gene_id in genes_with_peaks else 0
                 outfile.write('\t'.join(map(str, [gene_id, expr_val, has_peak,
                                 genes_with_peaks[gene_id] if gene_id in
-                                        genes_with_peaks else 'None\tNA'])) + '\n')
+                                        genes_with_peaks else 'None\tNA\tNA'])) + '\n')
         # make data file with data reversed
         with open(in_expression + '.with_peaks.%s.reversed.ks_data' %
                                             in_peaks, 'w') as outfile:
             outfile.write('\t'.join(['gene_id', 'expression_val','has_peak',
-                                     'peak_loc', 'peak_score']) + '\n')
+                                     'peak_loc', 'peak_score', 'peak_name']) + '\n')
             for gene_id, expr_val in reversed(gene_expr_sorted):
                 has_peak = 1 if gene_id in genes_with_peaks else 0
                 outfile.write('\t'.join(map(str, [gene_id, expr_val, has_peak,
                                 genes_with_peaks[gene_id] if gene_id in
-                                        genes_with_peaks else 'None\tNA'])) + '\n')
+                                        genes_with_peaks else 'None\tNA\tNA'])) + '\n')
+
+
+
+@active_if(len(glob.glob('*.mapped_reads.bigwig')) > 0)
+@split('*.gene.expression', regex('(.*)'),
+       #add_inputs(refseq_genes_to_bed, mapping.all_mappers_output + ['*.other_reads']),
+       add_inputs(refseq_genes_to_bed, '*.mapped_reads.bigwig'),
+       r'\1.*.raw_signal_around.npy', r'\1.%s.raw_signal_around.npy')
+def make_raw_signal_around_genes(in_files, _, out_pattern, binsize=50, windowsize=20000):
+    """Use expression data to sort raw read signal for several datasets sorting by expression data
+    Regions must be associated with 
+    """
+    #from hts_waterworks.visualize import bed_to_bedgraph, bedgraph_to_bigwig
+    #in_expression, in_genes, in_other_reads = (in_files[0], in_files[1],
+    #                                              in_files[2:])
+    in_expression, in_genes, in_bigwigs = (in_files[0], in_files[1],
+                                                  in_files[2])
+    # parse gene expression values
+    gene_expr = {}
+    for line in [line for line in open(in_expression) if "N/A" not in line]:
+        try:
+            gene_id, expr_val = line.strip().split('\t')
+        except:
+            continue
+        else:
+            gene_expr[gene_id] = expr_val
+    gene_expr_sorted = sorted(gene_expr.items(), key=lambda x:float(x[1]))
+    # gather gene positions
+    gene_positions = {}
+    for line in open(in_genes):
+        chrom, start, stop, name, score, strand = line.strip().split('\t')
+        gene_positions[name] = (chrom, int(start), int(stop))
+    sp.save(out_pattern % 'gene_expr', sp.array([e[1] for e in gene_expr_sorted if e[0] in gene_positions]))
+    
+    for in_wig_name in in_bigwigs:
+        in_wig = bigwig_file.BigWigFile(open(in_wig_name))
+        read_density = sp.zeros((windowsize // binsize, len(gene_expr)))
+        for i, (genename, expr) in enumerate(gene_expr_sorted):
+            try:
+                chrom, start, stop = gene_positions[genename]
+            except KeyError:
+                print 'skipping', genename
+                continue
+            #print genename
+            start = max(0, start - windowsize // 2)
+            stop = start + windowsize
+            #density_by_base = in_wig.get_as_array(chrom, start, stop)
+            #if density_by_base is None:
+            #    for j in xrange(windowsize // binsize):
+            #        read_density[j,i] = 0
+            #else:
+            #    density_by_base = sp.ma.masked_invalid(density_by_base)
+            #    for j in xrange(windowsize // binsize):
+            #        read_density[j,i] = sp.ma.compressed(density_by_base[j*binsize:(j+1)*binsize]).sum()
+            
+            reads_here = in_wig.get(chrom, start, stop)
+            if reads_here is None:
+                continue
+            for j in xrange(windowsize // binsize):
+                #reads_here = in_wig.get(chrom, start + j * binsize, start + (j+1) * binsize)
+                start_bin = start + j*binsize
+                stop_bin = start + (j+1) * binsize
+                read_density[j,i] = sum(l[2] for l in reads_here if start_bin <= (l[0] + l[1]) / 2 <= stop_bin)
+        sp.save(out_pattern % in_wig_name, read_density)
+
+@active_if(False)
+@collate(make_raw_signal_around_genes, regex(r'(.*\.gene\.expression)\..*\.raw_signal_around.npy'), r'\1.all_raw_signals.png')
+def draw_raw_signal_around_genes(raw_signals, out_png, windowsize=20000):
+    """draw the raw signals as computed by make_raw_signal_around_genes"""
+    gene_expr = filter(lambda f: 'gene_expr' in f, raw_signals)
+    reads = filter(lambda f: 'gene_expr' not in f and 'matched_size' not in f, raw_signals)
+    pyplot.figure()
+    f, plots = pyplot.subplots(1, len(reads)+1, sharex=False, sharey=True)
+    #sig_min = reduce(min, map(min, map(sp.load, reads)))
+    #sig_max = reduce(max, map(max, map(sp.load, reads)))
+    for i, read_sig in enumerate(reads):
+        #plots[i+1].imshow(sp.load(read_sig), interpolation='nearest', vmin=sig_min, vmax=sig_max)
+        plots[i+1].imshow(sp.ma.filled(sp.load(read_sig), fill_value=0).T, interpolation='nearest', aspect=.05)
+        plots[i+1].text(0,0,read_sig.split('gene.expression.')[1].split('.')[0], rotation=30, verticalalignment='bottom')
+    gexpr_ma = sp.load(gene_expr[0]).astype(float)
+    plots[0].imshow(sp.ma.filled(gexpr_ma.reshape(1,gexpr_ma.shape[0]), fill_value=0).T, interpolation='nearest', aspect=.002)
+    #yticks(sp.arange())
+    shape = sp.load(read_sig).shape
+    pyplot.xticks(sp.arange(0, shape[0] + shape[0]/4, shape[0] / 4), sp.arange(-windowsize/2, windowsize/2 + windowsize/4, windowsize/4))
+    f.savefig(out_png)
+    pyplot.close('all')
+    
+    
 
 @transform(make_expression_ks, suffix('.ks_data'), '.expr_corr.png')
 def draw_expression_correlation(in_data, out_png):
@@ -261,7 +440,7 @@ dev.off()
 @transform(make_expression_ks, suffix('.ks_data'), '.ks_plot.png')
 def draw_expression_ks(in_data, out_png):
     """KS-test to see if the 1's and 0's from input is non-uniform"""
-
+    print 'draw', in_data, out_png
     R_script = r"""
 d<-read.table(file="%(in_data)s", header=TRUE, sep="\t")
 # This does the actual KS test
