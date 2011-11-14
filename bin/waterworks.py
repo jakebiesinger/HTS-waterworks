@@ -17,6 +17,7 @@ import hts_waterworks.visualize as visualize
 import hts_waterworks.annotation as annotation
 import hts_waterworks.pas_seq as pas_seq
 import hts_waterworks.motif_discovery as motif_discovery
+import hts_waterworks.clip_seq as clip_seq
 from hts_waterworks.bootstrap import CONFIG_FILENAME, CONFIG_TEMPLATE
 
 
@@ -27,13 +28,14 @@ def bootstrap(_, out_config):
         outfile.write(CONFIG_TEMPLATE)
 
 @follows(preprocessing.final_output, preprocessing.read_length_histogram,
-         preprocessing.quality_boxplot, preprocessing.quality_nuc_dist)
+         preprocessing.quality_boxplot, preprocessing.quality_nuc_dist,
+         preprocessing.summarize_fastq_reads)
 def preprocess():
     """preprocessing/filtering steps complete"""
     pass
 
 
-@follows(*mapping.all_mappers_output)
+@follows(*(mapping.all_mappers_output + [mapping.summarize_mapped_reads]))
 def map_reads():
     """read mapping steps complete"""
     pass
@@ -53,7 +55,8 @@ def visualization():
 
 
 @follows(annotation.gene_overlap, annotation.gene_ontology,
-         annotation.find_nearby_genes, annotation.draw_expression_ks)
+         annotation.find_nearby_genes, annotation.plot_nearest_features,
+         annotation.draw_expression_correlation, annotation.draw_expression_ks)
 def expression():
     """expression/annotation steps complete"""
     pass
@@ -70,9 +73,19 @@ def motifs():
     """motif discovery complete"""
     pass
 
+@follows(pas_seq.plot_closest_polyA_db, pas_seq.plot_ttest_polya,
+         pas_seq.plot_scatter_polya, pas_seq.plot_differential_polya,
+         pas_seq.intersect_comparison_types, pas_seq.test_differential_polya)
+def do_pas_seq():
+    """Run complete pas_seq pipeline"""
+
+@follows(clip_seq.reproducible_motifs, clip_seq.reproducible_positions,
+         clip_seq.find_meme_motifs_around_sites)
+def do_clip_seq():
+    """Run complete CLIP-seq pipeline"""
 
 @follows(preprocess, map_reads, peak_calling, visualization, expression, motifs,
-         pas_seq.test_differential_polya)
+         do_pas_seq, do_clip_seq)
 @files(None, 'all_complete.ready')
 def all_complete(_, out_sentinel):
     """HTS workflow complete"""
