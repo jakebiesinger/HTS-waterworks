@@ -36,6 +36,9 @@ from hts_waterworks.bootstrap import cfg, get_genome, genome_path
 import hts_waterworks.call_peaks as call_peaks
 import hts_waterworks.annotation as annotation
 
+
+#from ipdb import set_trace as breakpoint
+
 # motif setup
 
 @transform(call_peaks.all_peak_caller_functions + 
@@ -96,7 +99,7 @@ def discover_meme_motifs(in_fasta, out_motifs):
                                            cfg.get('motifs', 'meme_params'),
                                            out_motifs)
     #if 'top' in in_fasta and 'around' in in_fasta:
-    #sys_call(cmd)
+    sys_call(cmd)
     motifs = sequence_motif.parseMemeMotifs('%s_meme_out/meme.txt' % out_motifs)
     pickle.dump(motifs, open(out_motifs, 'w'))
 
@@ -128,13 +131,20 @@ def sample_genome_short(_, out_samples):
     sampling.main(args)
 
 @transform('*.known.motifs.transfac', suffix('.transfac'), '')
-def convert_text_motifs(in_transfac, out_pickle):
+def convert_transfac_motifs(in_transfac, out_pickle):
     """Convert text files with motifs into our pickled format"""
     transfac_str = open(in_transfac).read()
     m = sequence_motif.parseMotifsFromTransfac(transfac_str)
     pickle.dump(m, open(out_pickle, 'w'))
+
+@transform('*.known.motifs.dreme', suffix('.dreme'), '')
+def convert_dreme_motifs(in_dreme, out_pickle):
+    """Convert text files with motifs into our pickled format"""
+    dreme_str = open(in_dreme).read()
+    m = sequence_motif.parseMotifsFromTransfac(dreme_str)
+    pickle.dump(m, open(out_pickle, 'w'))
     
-@follows(convert_text_motifs)
+@follows(convert_transfac_motifs)
 @transform([discover_meme_motifs, discover_nmica_motifs, '*.known.motifs'],
         suffix('.motifs'),
         add_inputs(sample_genome_short), '.with_mean_sd.motifs')
@@ -190,6 +200,7 @@ def sample_genome_like_peaks(in_peaks, out_files):
                                              str(line.stop), str(index), '0',
                                 '+' if line.orientation == 1 else '-']) + '\n')
 
+@active_if(len(glob.glob('*control*fastq')) > 0)
 @jobs_limit(cfg.getint('DEFAULT', 'max_throttled_jobs'), 'throttled')
 @split(call_peaks.all_peak_caller_functions + [get_top_peaks],
         regex(r'(.*).peaks$'),
@@ -223,20 +234,44 @@ def sample_control_like_peaks(in_peaks, out_files):
                                 '+' if seq.orientation == 1 else '-']) + '\n')
 
 @follows(sample_genome_like_peaks)
-@collate(motif_mean_sd, regex(r'(.*)\.(.*)\.peaks(.*)\.with_mean_sd.motifs$'), 
-         add_inputs(r'\1.\2.peaks', r'\1.\2.peaks.similar.genomic.sample'), 
-         r'\1.\2.peaks\3.with_mean_sd.motifs.genomic.enrichment')
-def motif_enrichment_genomic(in_files, out_enrichment):
-    """Determine a motif's enrichment vs. genomic samples"""
-    in_motifs, in_peaks, in_control_sample = in_files[0]
-    for zscore in cfg.get('motifs', 'motif_zscores').split(','):
-        args = shlex.split('''%s --motif_file=%s --bg_samples=%s --genome=%s
-                              --output_file=%s --zscore=%s''' % (
-                                        in_peaks, in_motifs, in_control_sample,
-                                        cfg.get('DEFAULT', 'worldbase_genome'),
-                                        out_enrichment, zscore))
-        motif_significance.main(args)
+#@collate(motif_mean_sd, regex(r'(.*)\.(.*)\.peaks(.*)\.with_mean_sd.motifs$'), 
+#         add_inputs(r'\1.\2.peaks', r'\1.\2.peaks.similar.genomic.sample'), 
+#         r'\1.\2.peaks\3.with_mean_sd.motifs.genomic.enrichment')
 
+# Work in progress...
+###@collate([call_peaks.all_peak_caller_functions +
+###                    [get_top_peaks, '*.custom.peaks'],
+###          sample_genome_like_peaks,
+###          motif_mean_sd],
+###    regex(), )
+@split(motif_mean_sd, regex(r'(.*)\.with_mean_sd\.motifs'),
+       add_inputs([call_peaks.all_peak_caller_functions +
+                  [get_top_peaks, '*custom.peaks'], sample_genome_like_peaks]),
+       r'\1.with_mean_sd.*.vs.*.enrichment', r'\1.with_mean_sd.vs.similar.genomic.sample.zscore_%s.enrichment')
+def motif_enrichment_genomic(in_files, out_pattern, out_template):
+    """Determine a motif's enrichment vs. genomic samples"""
+    in_motifs = in_files[0]
+    in_peaks = in_files[1][0]
+    in_control_samples = filter(lambda x: x.endswith('sample'), in_files[1][1:])
+    
+    for peak_file in in_peaks:
+        # get the similar control data
+        cur_control = filter(lambda x: x == (peak_file + '.similar.genomic.sample'),
+                             in_control_samples)
+        for c in cur_control:
+            short_control = c.split(peak_file)[1][1:]
+            for zscore in cfg.get('motifs', 'motif_zscores').split(','):
+                outfile = out_template % (zscore)
+                args = shlex.split( '%s --motif_file=%s --bg_samples=%s '
+                                   '--genome=%s --output_file=%s --zscore=%s' %
+                                        (peak_file, in_motifs, c,
+                                         cfg.get('DEFAULT', 'worldbase_genome'),
+                                         outfile, zscore))
+                print args
+                motif_significance.main(args)
+
+
+@active_if(len(glob.glob('*control*fastq')) > 0)
 @follows(sample_control_like_peaks)
 @collate(motif_mean_sd, regex(r'(.*)\.(.*)\.peaks(.*)\.with_mean_sd.motifs$'), 
          add_inputs(r'\1.\2.peaks', r'\1.\2.peaks.similar.control.sample'), 
@@ -282,9 +317,6 @@ def consensus_enrichment(in_files, out_enrichment):
 def motif_presence_sorted_peaks(in_files, out_patterns, in_prefix, in_suffix):
     """Plot the running motif presence, starting at most significant peaks"""
     in_peaks, in_motifs = in_files[0], in_files[1:]
-    print in_files
-    print in_peaks, in_motifs
-    return
     out_summary = in_prefix + in_suffix + '.%s.peak_motif_presence'
     out_png = in_prefix + in_suffix + '.%s.peak_motif_presence.png'
     out_locations = in_prefix + in_suffix + '.%s.peak_motif_locations'
@@ -300,20 +332,20 @@ def motif_presence_sorted_peaks(in_files, out_patterns, in_prefix, in_suffix):
         cur_motifs = {}
         m_file_short = re.sub(r'((treat|fastq|fastq_illumina|min_qual|bowtie|' +
                                     r'maq|peaks|with_mean_sd|discovered|' +
-                                    r'motifs_meme_out|motifs)\.)+(motifs\.*)*',
+                                    r'motifs_meme_out|motifs|matched_size_[0-9]|sorted|[0-9]+_around|small_sample)\.)+(motifs\.*)*',
                               '', m_file)
-        print m_file_short
+        #print m_file_short
         with open(m_file) as infile:
             try:
                 cur_motifs.update(pickle.load(infile))
             except:
                 infile.seek(0)
                 for line in infile:
-                    print line,
+                    #print line,
                     name, consensus = line.strip('\n').split('\t')
                     cur_motifs.update({name:
                                     sequence_motif.makePWMFromIUPAC(consensus)})
-        print m_file, cur_motifs
+        #print m_file, cur_motifs
         all_motif_percent = {}
         for zscore in cfg.get('motifs','motif_zscores').strip().split(','):
             for name, pwm in cur_motifs.items():
@@ -344,21 +376,19 @@ def motif_presence_sorted_peaks(in_files, out_patterns, in_prefix, in_suffix):
                                             '+' if h[2] == 1 else '-')
                                                                 for h in hits)
                     percent_with.append(float(with_motif) / (total+1))
-                    
+                
+                #print all_motif_percent, name, percent_with
                 all_motif_percent[name] = percent_with
             # having calculated for all motifs in all files,
             # plot a figure and give a summary
-            with open(out_summary % ('z' + zscore + '.' +
-                                     m_file_short), 'w') as outfile:
+            with open(out_summary % ('z' + zscore), 'w') as outfile:
                 outfile.writelines('%s\t%s\n' % (name, percent)
                                 for name, percent in all_motif_percent.items())
 
             # write the peak locations along with the motif instances
             # that occur in them
-            with open(out_locations % ('z' + zscore + '.' +
-                                       m_file_short), 'w') as outfile:
-                with open(out_locations_bed % ('z' + zscore + '.' +
-                                               m_file_short), 'w') as out_bed:
+            with open(out_locations % ('z' + zscore), 'w') as outfile:
+                with open(out_locations_bed % ('z' + zscore), 'w') as out_bed:
                     # header is 6 columns of peak info, then motif info
                     outfile.write('\t'.join(['p_chrom', 'p_start', 'p_stop',
                                              'p_name', 'p_score', 'p_strand']))
@@ -381,16 +411,16 @@ def motif_presence_sorted_peaks(in_files, out_patterns, in_prefix, in_suffix):
                                                         h[2]])) + '\n')
                         outfile.write('\n')
                     
-            all_motif_percent = sorted(all_motif_percent.items())
-            names = [k for k, v in all_motif_percent]
-            datapoints = numpy.array([v for k, v in all_motif_percent]).T
+            all_motif_percent_dict = sorted(all_motif_percent.items())
+            names = [k for k, v in all_motif_percent_dict]
+            datapoints = numpy.array([v for k, v in all_motif_percent_dict]).T
             
             # plot original data
             pyplot.plot(datapoints)
             pyplot.legend(names)
             pyplot.title('Motifs from\n%s\nPresence in\n%s' % (m_file_short,
                                                                in_peaks))
-            pyplot.savefig(out_png % ('z'+zscore+'.'+m_file_short))
+            pyplot.savefig(out_png % ('z'+zscore))
             pyplot.close()
             
             # plot top 10% of data
@@ -402,14 +432,69 @@ def motif_presence_sorted_peaks(in_files, out_patterns, in_prefix, in_suffix):
             pyplot.legend(names)
             pyplot.title('Top 10%% of Motifs from\n%s\nPresence in\n%s' % (
                                                         m_file_short, in_peaks))
-            pyplot.savefig(out_png % ('z' + zscore + '.' + m_file_short +
-                                                            '.top10percent'))
+            pyplot.savefig(out_png % ('z' + zscore + '.top10percent'))
             pyplot.close()
         
     matplotlib.rcParams['font.size'] = old_size 
 
-@split([discover_meme_motifs, discover_nmica_motifs, '*.known.motifs'],
-            regex(r'(.*)\.motifs$'), '.logo.png', r'\1')
+
+
+
+#
+#sirna3_pval.txt.gene.expression.with_peaks.pygo2.treat.min_qual.bowtie.sorted.macs14.peaks.nearby.genes.reversed.ks_data
+#with
+#pygo2.treat.min_qual.bowtie.sorted.macs14.peaks.z4.29.peak_motif_locations
+
+@follows(motif_presence_sorted_peaks)
+@split(annotation.make_expression_ks,
+    regex(r'(.*)\.with_peaks\.(.*)\.nearby\.genes\.ks_data$'),
+    add_inputs(r'\2.*.peak_motif_locations'),
+    r'\1.with_peaks.\2.ks_data_with.%s.peak_motif_locations.with_expression',
+    r'\1.with_peaks.\2.ks_data_with.%s.peak_motif_locations.with_expression', r'\2')
+def ks_with_motifs(in_files, out_pattern, out_template, peak_file):
+    """join ks expression data with peak information and motif information"""
+    in_ks_data, in_motifs = in_files[0], in_files[1:]
+    #print 'in_data', in_ks_data
+    in_motifs = filter(lambda f: 'similar' not in f and f.startswith(peak_file) and 'top' not in f.split('.z')[0], in_motifs)
+    
+    #print '\n\n\n\n', in_motifs
+    
+    ks_data = {}  # index by peak name
+    for i, line in enumerate(open(in_ks_data)):
+        fields = line.strip().split('\t')
+        peak_id = fields[-1]
+        if peak_id == 'NA':
+            peak_id = 'NA_%s' % i
+        ks_data[peak_id] = fields
+
+    for i, motif_file in enumerate(in_motifs):
+        #out_file = open(out_template % f.split(peak_file)[1] for f in in_motifs])
+        out_file = open(out_template % i, 'w')
+        out_file.write('\t'.join(['motifs_from_file', motif_file]) + '\n')
+        out_file.write('\t'.join(['gene_id', 'expr_val', 'has_peak', 'peak_loc', 'peak_score', 'peak_name'] + open(motif_file).readline().strip().split('\t')[6:]) + '\n\n')
+        # index motifs by peak id
+        motif_data = {}
+        for line in open(motif_file):
+            fields = line.strip().split('\t')
+            peak_id = fields[3]
+            if peak_id == 'NA':
+                raise RuntimeError("peak_id must be not be NA!")
+            elif peak_id in motif_data:
+                raise RuntimeError("peak_id must be unique! %s %s" % (peak_id, motif_data))
+            else:
+                motif_data[peak_id] = fields
+        
+        # join ks data and motif data
+        for peak_id in ks_data:
+            out_file.write('\t'.join(ks_data[peak_id]))
+            if peak_id in motif_data:
+                out_file.write('\t' + '\t'.join(motif_data[peak_id][6:]))
+            out_file.write('\n')
+        out_file.close()
+
+
+@split([discover_meme_motifs, discover_nmica_motifs, r'*.known.motifs'],
+            regex(r'(.*)\.motifs$'), r'\1.motif_*.logo.png', r'\1')
 def make_seq_logo(in_pwm, eps_pattern, out_base, to_generate=1000,
                                                             out_format="PNG"):
     "convert a pwm into a sequence logo"
@@ -450,11 +535,11 @@ def make_seq_logo(in_pwm, eps_pattern, out_base, to_generate=1000,
     for name, pwm in pwms.items():
         columns = []
         for row in pwm.matrix:
-            print row
+            #print row
             if min(row) < 0:
                 row = [2**(el + math.log(.25, 2)) for el in row]
                 row = [el / sum(row) for el in row]
-            print row
+            #print row
             l = list(sampling.weighted_sample(zip(row, 'ACGT'), to_generate))
             random.shuffle(l)
             columns.append(l)
@@ -465,6 +550,7 @@ def make_seq_logo(in_pwm, eps_pattern, out_base, to_generate=1000,
         req = urllib2.Request(url, data)
         response = urllib2.urlopen(req)
         im = response.read()
+        print 'saving logo to', (out_base + '.motif_%s.logo.png' % name)
         with open(out_base + '.motif_%s.logo.png' % name, 'w') as outfile:
             outfile.write(im)
 
