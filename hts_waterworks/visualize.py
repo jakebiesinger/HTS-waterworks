@@ -16,11 +16,12 @@ import hts_waterworks.bootstrap as bootstrap
 import hts_waterworks.mapping as mapping
 import hts_waterworks.call_peaks as call_peaks
 import hts_waterworks.pas_seq as pas_seq
+import hts_waterworks.clip_seq as clip_seq
 
 
 @jobs_limit(cfg.get('DEFAULT', 'max_throttled_jobs'), 'throttled')
 @follows(bootstrap.get_chrom_sizes)
-@transform(call_peaks.all_peak_caller_functions + [pas_seq.remove_terminal_exon] + mapping.all_mappers_output,
+@transform(call_peaks.all_peak_caller_functions + [pas_seq.remove_terminal_exon] + mapping.all_mappers_output + mapping.all_mappers_raw_reads,
            suffix(''), '.clipped.sorted')
 def clip_and_sort_peaks(in_bed, out_sorted):
     """Sort the bed file and constrain bed regions to chromosome sizes"""
@@ -125,8 +126,8 @@ def bedgraph_normalize_per_million(in_files, out_bedgraph):
 #        for line in infile:
             
 
-@transform([bedgraph_normalize_per_million, bed_to_bedgraph],
-    suffix('.bedgraph'), '.bigwig')
+@transform([bedgraph_normalize_per_million, bed_to_bedgraph, clip_seq.pileup_starts],
+    regex(r'(.*)\.(bedgraph|pileup_reads)'), r'\1.bigwig')
 def bedgraph_to_bigwig(in_bedgraph, out_bigwig):
     """Convert the bedgraph file to .bigwig for viewing on UCSC"""
     cmd = 'bedGraphToBigWig %s %s.chrom.sizes %s' % (in_bedgraph, genome_path(),
