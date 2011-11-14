@@ -27,6 +27,7 @@ from hts_waterworks.utils.pas_seq_expression import (group_reads_by_gene,
 from hts_waterworks.utils.common import breakpoint
 
 
+@active_if(False)
 @files(None, '%s.polyA_DB' % cfg.get('DEFAULT', 'genome'), cfg.get('DEFAULT', 'genome'))
 def get_polyA_DB(_, out_db, genome_build):
     cmd = r"curl 'http://hgdownload.cse.ucsc.edu/goldenPath/%s/database/polyaDb.txt.gz' | gunzip - | cut -d $'\t' -f 2- > %s"
@@ -34,6 +35,7 @@ def get_polyA_DB(_, out_db, genome_build):
     sys_call(cmd, file_log=False)
 
 
+@active_if(cfg.getint('PAS-Seq', 'min_read_count') > 0)
 @jobs_limit(cfg.getint('DEFAULT', 'max_throttled_jobs'), 'throttled')
 @transform(mapping.all_mappers_output, suffix('.mapped_reads'),
            '.overlap.mapped_reads', cfg.getint('PAS-Seq', 'min_read_count'))
@@ -155,8 +157,10 @@ def merge_adjacent_reads(in_bed, out_pattern, window_width, iterations,
 def remove_internal_priming_again(in_bed, out_bed):
     mapping.remove_internal_priming(in_bed, out_bed)
 
-@transform('hg19.refseq_genes', suffix('hg19.refseq_genes'),
-           'hg19.refseq_genes.middle_exons')
+#@transform('hg19.refseq_genes', suffix('hg19.refseq_genes'),
+#           'hg19.refseq_genes.middle_exons')
+@transform(get_refseq_genes, suffix('.refseq_genes'),
+           '.refseq_genes.middle_exons')
 def make_middle_exons(in_refseq, out_exons):
     with open(out_exons, 'w') as outfile:
         for line in open(in_refseq):
@@ -199,6 +203,7 @@ def pileup_normalize_per_million(in_pileup, out_pileup):
 
 short_name = lambda x: x.replace('hg19.refseq_genes.', '').split('.trim_regex')[0] + ('.plus' if 'plus' in x else '.minus')
 
+@active_if(cfg.getboolean('PAS-Seq', 'test_differential_polya'))
 @follows(remove_terminal_exon, pileup_normalize_per_million)
 @split(get_refseq_genes, regex(r'(.*)'),
        add_inputs(pileup_normalize_per_million if
