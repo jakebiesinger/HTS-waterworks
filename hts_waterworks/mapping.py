@@ -205,6 +205,7 @@ def bowtie_to_bed(in_bowtie, out_bed):
         with open(out_bed, 'w') as outfile:
             for line in infile:
                 name, strand, chrom, start = line.split('\t')[:4]
+                name = name.replace(' ', '-')
                 stop = int(start) + read_lengths + 1  # stop is fencepost after
                 outfile.write('\t'.join([chrom, start, str(stop), name, '0',
                                          strand]) + '\n')
@@ -325,13 +326,14 @@ def maq_map_to_bed(in_map, out_bed):
 
 all_mappers_output = [bowtie_to_bed, pash_to_bed, mosaik_to_bed, run_ssaha2,
                       maq_map_to_bed]
+all_mappers_raw_reads = all_mappers_output[:]
 
 
 @active_if(cfg.getboolean('peaks', 'downsample_reads'))
 @split(all_mappers_output, regex(r'(.+)\.treat(.*)\.mapped_reads'),
        add_inputs(r'\1.control\2.mapped_reads'),
-       [r'\1.treat\2.matched_size_*.mapped_reads',
-        r'\1.control\2.matched_size_*.mapped_reads'])
+       [r'\1.treat\2.matched_size_[0-9].mapped_reads',
+        r'\1.control\2.matched_size_[0-9].mapped_reads'])
 def uniquefy_downsample_reads(in_files, out_files):
     """Uniquefy sequence reads then downsample so the total unique tag count in
     treatment and control is the same.  This may generate many downsampled datasets.
@@ -340,7 +342,7 @@ def uniquefy_downsample_reads(in_files, out_files):
     #    Top-level import will cause this module to load only 1/2 way
     #    we import here because we need to call this function directly,
     #    and not just when using ruffus
-    from hts_waterworks.visualize import bed_clip_and_sort, bed_uniquefy
+    from hts_waterworks.visualize import bed_uniquefy
     if not cfg.getboolean('peaks', 'downsample_reads'):
         with log_mtx:
             log.debug('NOT downsampling the sequence reads!')
@@ -356,19 +358,23 @@ def uniquefy_downsample_reads(in_files, out_files):
         if out_control_template == in_control:
             raise RuntimeError('regex substitution failed from %s to %s' % (
                                             in_control, out_control_template))
+        tmp_t_sorted = tempfile.NamedTemporaryFile(delete=False).name
+        tmp_c_sorted = tempfile.NamedTemporaryFile(delete=False).name
+        tmp_t_unique = tempfile.NamedTemporaryFile(delete=False).name
+        tmp_c_unique = tempfile.NamedTemporaryFile(delete=False).name
         
         # sort the reads
-        bed_clip_and_sort(in_treat, in_treat+'.tmp_sorted')
-        bed_clip_and_sort(in_control, in_control+'.tmp_sorted')
+        bed_clip_and_sort(in_treat, tmp_t_sorted)
+        bed_clip_and_sort(in_control, tmp_c_sorted)
         
         # uniquefy the reads
-        bed_uniquefy(in_treat+'.tmp_sorted', in_treat+'.tmp_unique',
+        bed_uniquefy(tmp_t_sorted, tmp_t_unique,
                      cfg.getint('visualization', 'uniquefy_track_max_reads'))
-        bed_uniquefy(in_control+'.tmp_sorted', in_control+'.tmp_unique',
+        bed_uniquefy(tmp_c_sorted, tmp_c_unique,
                      cfg.getint('visualization', 'uniquefy_track_max_reads'))
         
-        total_treat = sum(1 for l in open(in_treat+'.tmp_unique'))
-        total_control = sum(1 for l in open(in_control+'.tmp_unique'))
+        total_treat = sum(1 for l in open(tmp_t_unique))
+        total_control = sum(1 for l in open(tmp_c_unique))
         if total_treat == total_control:
             with log_mtx:
                 log.debug('No downsampling required-- tag counts identical')
@@ -381,23 +387,24 @@ def uniquefy_downsample_reads(in_files, out_files):
                     # reduce number of treatment reads
                     inds_to_keep = set(random.sample(xrange(total_treat),
                                                                 total_control))
-                    in_orig, out_orig = in_control+'.tmp_unique', out_control
-                    in_subset, out_subset = in_treat+'.tmp_unique', out_treat
+                    in_orig, out_orig = tmp_c_unique, out_control
+                    in_subset, out_subset = tmp_t_unique, out_treat
                 else:
                     # reduce number of control reads
                     inds_to_keep = set(random.sample(xrange(total_control),
                                                      total_treat))
-                    in_orig, out_orig = in_treat+'.tmp_unique', out_treat
-                    in_subset, out_subset = in_control+'.tmp_unique', out_control
+                    in_orig, out_orig = tmp_t_unique, out_treat
+                    in_subset, out_subset = tmp_c_unique, out_control
                 sys_call('cp %s %s' % (in_orig, out_orig))
                 # subset the tags
                 with open(in_subset) as infile:
                     with open(out_subset, 'w') as outfile:
                         outfile.writelines(line for i, line in enumerate(infile) 
                                                         if i in inds_to_keep)
+        for f in [tmp_t_sorted, tmp_t_unique, tmp_c_sorted, tmp_c_unique]:
+            os.unlink(f)
 if cfg.getboolean('peaks', 'downsample_reads'):
     all_mappers_output.append(uniquefy_downsample_reads)
-
 
 @active_if(cfg.getboolean('mapping', 'collapse_mapped_read_IDs'))
 @transform(all_mappers_output, suffix('.mapped_reads'),
@@ -415,7 +422,7 @@ def collapse_mapped_read_IDs(in_bed, out_bed):
             p_chrom, p_start, p_name, p_strand = None, None, None, None
             for line in open(tmp_sorted.name):
                 chrom,start,stop,name,score,strand = line.split('\t')
-                name = name.split('_')[-1] if '_' in name else name
+                name = ''.join(name.split('_')[-2:]) if '_' in name else name
                 if not (p_name == name and p_start == start and \
                         p_strand == strand and p_chrom == chrom):
                     # current read does NOT have the same position or ID
@@ -423,7 +430,6 @@ def collapse_mapped_read_IDs(in_bed, out_bed):
                 p_chrom, p_start, p_name, p_strand = chrom, start, name, strand
 if cfg.getboolean('mapping', 'collapse_mapped_read_IDs'):
     all_mappers_output = [collapse_mapped_read_IDs]
-
 
 @follows(get_genome)
 @active_if(cfg.getboolean('mapping', 'remove_internal_priming'))
@@ -498,3 +504,25 @@ def bed_clip_and_sort(in_bed, out_sorted):
         cmd = r"sort -t $'\t' -k 1,1 -k 2,2n -S 2G %s > %s" % (tmp_clipped.name, out_sorted)
         sys_call(cmd)
 all_mappers_output = [bed_clip_and_sort]
+
+
+@merge([bowtie_to_bed, pash_to_bed, mosaik_to_bed, run_ssaha2, maq_map_to_bed,
+        uniquefy_downsample_reads, collapse_mapped_read_IDs,
+        remove_internal_priming, bed_clip_and_sort], 'mapped_reads.wikisummary')
+def summarize_mapped_reads(in_mapped, out_summary):
+    """Summarize counts of mapped reads"""
+    with open(out_summary, 'w') as outfile:
+        outfile.write("""
+{| class="wikitable"
+|+ Summary of mapped read counts
+!scope="col" | Dataset
+!scope="col" | Number of mapped reads
+|-
+""")
+        for infile in in_mapped:
+            for count, line in enumerate(open(infile)):
+                pass
+            outfile.write("| %s || %s\n|-\n" % (infile, count))
+        outfile.write('|}\n')
+
+
