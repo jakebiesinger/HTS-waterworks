@@ -5,6 +5,7 @@
 
 import re
 import itertools
+import tempfile
 
 from ruffus import (transform, follows, collate, files, split, merge,
                     add_inputs, regex, suffix, mkdir, jobs_limit, output_from)
@@ -12,8 +13,9 @@ from ruffus.task import active_if
 
 from hts_waterworks.utils.ruffus_utils import (sys_call, main_logger as log,
                                            main_mutex as log_mtx)
-from hts_waterworks.bootstrap import cfg
+from hts_waterworks.bootstrap import cfg, get_chrom_sizes
 import hts_waterworks.mapping as mapping
+import hts_waterworks.clip_seq as clip_seq
 from hts_waterworks.utils.common import (bedCommentFilter, readBedLines,
                                          parse_ucsc_range)
 
@@ -120,6 +122,65 @@ def run_macs14(in_files, out_peaks, max_fdr):
                                         'MACS_peak_%s' % (index + 1), score])
                                             + '\t+\n')
 
+#@active_if(cfg.getboolean('motifs', 'discover_read_pileup_motifs'))
+#@transform(mapping.all_mappers_output, suffix('.mapped_reads'),
+#         '.pileup.peaks')
+#def pileup_peaks(in_treat, out_peaks):
+#    """Call peaks by converting to a bedgraph and applying a local lambda"""
+#    import hts_waterworks.visualize as visualize
+#    return
+#    with tempfile.NamedTemporaryFile() as out_bedgraph:
+#        visualize.bed_to_bedgraph([in_treat, get_chrom_sizes(None, None, False)], out_bedgraph)
+        
+    
+
+#@active_if(cfg.getboolean('motifs', 'discover_read_pileup_motifs'))
+@active_if(cfg.getboolean('motifs', 'discover_read_pileup_motifs') and
+           cfg.getboolean('peaks', 'run_macs14'))
+@transform(mapping.all_mappers_output, suffix('.mapped_reads'),
+         '.macs14.treat.nocontrol.peaks')
+def run_macs14_no_control(in_treat, out_peaks):
+    """Call peaks using MACS (v1.4) without control data"""
+    cmd = 'macs14 -t %s --name=%s %s' % (in_treat, out_peaks,
+                                         cfg.get('peaks', 'macs14_params'))
+    sys_call(cmd)
+    peaks_to_keep = set()
+    # convert to proper bedfile- ints for score and + for strand
+    with open(out_peaks, 'w') as outfile:
+        with open(out_peaks + '_peaks.xls') as infile:
+            for index, line in enumerate(itertools.ifilter(bedCommentFilter,
+                                                                    infile)):
+                fields = line.split('\t')
+                if fields[0] == 'chr':
+                    continue # skip header
+                start = str(max(0, int(fields[1])))
+                score = str(max(0, min(1000, int(float(fields[6])))))
+                outfile.write('\t'.join([fields[0], start, fields[2],
+                                        'MACS14_peak_%s' % (index + 1), score])
+                                                + '\t+\n')
+                peaks_to_keep.add(index)
+    # take region surrounding the peak summit
+    summit_size = cfg.getint('peaks', 'peak_summit_size')
+    with open(out_peaks + '_summits.%s_around' % \
+                        cfg.get('peaks', 'peak_summit_size'), 'w') as outfile:
+        with open(out_peaks + '_summits.bed') as infile:
+            for index, line in enumerate(itertools.ifilter(bedCommentFilter,
+                                                                    infile)):
+                fields = line.strip().split('\t')
+                if fields[0] == 'chr':
+                    continue # skip header
+                # score is number of reads at summit
+                score = str(max(0, min(1000, int(float(fields[-1])))))
+                start = str(max(0, int(fields[1]) - summit_size / 2))
+                stop = str(int(fields[2]) + summit_size / 2)
+                if index in peaks_to_keep:
+                    outfile.write('\t'.join([fields[0], start, stop,
+                                        'MACS_peak_%s' % (index + 1), score])
+                                            + '\t+\n')
+
+
+
+
 @active_if(cfg.getboolean('peaks', 'run_arem'))
 @collate(mapping.all_mappers_output, regex(r'(.+)\.treat(.*)\.mapped_reads'), 
          add_inputs(r'\1.control\2.mapped_reads'), r'\1.treat\2.arem.peaks',
@@ -218,5 +279,16 @@ def glitr_range_to_bed(in_range, out_bed):
                                     str(center_stop), 'GLITR_peak_%s'%(i+1),
                                     str(int(float(foldchange))),'+']) + '\n')
 
+@active_if(cfg.getboolean('motifs', 'discover_read_pileup_motifs'))
+@transform(clip_seq.pileup_starts, suffix('.pileup_reads'), '.treat.pileup.peaks')
+def pileup_as_peaks(in_pileup, out_peaks):
+    """convert bedgraph to peaks"""
+    with open(out_peaks, 'w') as outfile:
+        for line in open(in_pileup):
+            chrom, start, stop, count = line.strip().split('\t')
+            strand = '-' if 'minus' in in_pileup else '+'
+            outfile.write('\t'.join([chrom, start, stop, '.', count, strand]) + '\n')
 
-all_peak_caller_functions = [run_macs, run_macs14, run_arem, glitr_range_to_bed]
+all_peak_caller_functions = [run_macs, run_macs14, run_macs14_no_control,
+                             run_arem, glitr_range_to_bed, pileup_as_peaks]
+
