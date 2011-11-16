@@ -63,8 +63,12 @@ def splitGeneStructure(geneLines, outNameBase, promoterSize, promoterExtend, dow
     tss_out = open(outNameBase + '.tss', 'w')
     noncoding_out = open(outNameBase + '.noncoding', 'w')
     for line in geneLines:
-        (name, chrom, strand, txStart, txEnd, cdsStart,
-            cdsEnd, exons, name2, noncoding) = parse_gene_line(line)
+        try:
+            (name, chrom, strand, txStart, txEnd, cdsStart,
+                cdsEnd, exons, name2, noncoding) = parse_gene_line(line, startCol=1)
+        except ValueError:
+            (name, chrom, strand, txStart, txEnd, cdsStart,
+                cdsEnd, exons, name2, noncoding) = parse_gene_line(line, startCol=0)
         if noncoding:
             noncoding_out.write('\t'.join([chrom, str(txStart), str(txEnd)] + ([name, name2,strand] if opts.with_gene_name else [])) + '\n')
             continue

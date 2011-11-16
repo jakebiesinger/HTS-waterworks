@@ -47,8 +47,10 @@ def get_refseq_genes(_, out_genes):
     sys_call('gunzip -f refGene.txt.gz')
     sys_call('mv refGene.txt %s' % out_genes)
 
-@follows(get_refseq_genes, convert_gtf_genes_to_bed)
-@transform('%s.*_genes' % cfg.get('DEFAULT', 'genome'), suffix('_genes'), '_genes.all')
+
+@transform([get_refseq_genes, convert_gtf_genes_to_bed,
+            convert_gff3_genes_to_bed],
+    suffix('_genes'), '_genes.all')
 def refseq_genes_to_bed(in_genes, out_bed):
     """convert refseq genes file to BED format"""
     with open(in_genes) as infile:
