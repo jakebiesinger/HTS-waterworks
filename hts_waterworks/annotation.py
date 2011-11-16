@@ -25,55 +25,17 @@ from hts_waterworks.bootstrap import cfg, get_chrom_sizes
 import hts_waterworks.call_peaks as call_peaks
 import hts_waterworks.mapping as mapping
 
-@transform('%s.*.gtfgenes' % cfg.get('DEFAULT', 'genome'), suffix('.gtfgenes'), '_genes')
-def convert_gtf_genes_to_bed(in_gtf, out_bed):
-    """convert the gene GTF files into "standard" UCSC format
-    from multi-line GTF to:
-    bin    name    chrom   strand  txStart txEnd   cdsStart    cdsEnd  exonCount   exonStarts  exonEnds [...]
-    """
-    all_genes = {}
-    with open(in_gtf) as infile:
-        for line in parseGTF(infile):
-            chrom, src, feature, start, stop, score, strand, frame, attrs = line
-            start, stop = int(start) - 1, int(stop) - 1  # shift to 0-based
-            name = attrs['gene_id']
-            if name not in all_genes:
-                all_genes[name] = {}
-                all_genes[name]['strand'] = '-'
-                all_genes[name]['chrom'] = chrom
-            if feature not in all_genes[name]:
-                all_genes[name][feature] = []
-            all_genes[name][feature].append((start, stop))
-    
-    with open(out_bed, 'w') as outfile:
-        for gene_id, features in all_genes.iteritems():
-            chrom, strand = features['chrom'], features['strand']
-            all_posns = flatten([v for k, v in features.items() if k in
-                                ['exon', 'CDS', 'start_codon', 'stop_codon']])
-            txStart = min(all_posns)
-            txEnd = max(all_posns)
-            try:  # in xenTro2 JGI genes, 2987 don't have a start/stop_codon
-                cdsStart = min(flatten([features['start_codon'],
-                                               features['stop_codon']]))
-                cdsEnd = max(flatten([features['start_codon'],
-                                             features['stop_codon']]))
-            except (KeyError, ValueError) as e:  # no start_codon or stop_codon
-                # hack to indicate this is a non-coding gene
-                # see makeGeneStructure for how this is set up
-                cdsStart, cdsEnd = -1, -1
-            exonCount = len(features['CDS'])
-            exonStarts = ','.join(map(str, sorted(int(s[0])
-                                            for s in features['CDS']))) + ','
-            exonEnds = ','.join(map(str, sorted(int(s[1])
-                                            for s in features['CDS']))) + ','
-            # just make frames 0
-            exonFrames = ','.join(['0'] * len(features['CDS'])) + ','
-            outfile.write('\t'.join(map(str, [0, gene_id, chrom, strand,
-                                    txStart, txEnd, cdsStart, cdsEnd,
-                                    exonCount, exonStarts,
-                                    exonEnds, exonFrames, gene_id,
-                                    'none', 'none', ])) + '\n')
 
+
+@transform('%s.*.gtfgenes' % cfg.get('DEFAULT', 'genome'), suffix('.gtfgenes'), '_genes')
+def convert_gtf_genes_to_bed(in_gtf, out_gene_pred):
+    """convert gtf genes to UCSC's genePred format"""
+    sys_call('gtfToGenePred %s %s' % (in_gtf, out_gene_pred), file_log=False)
+
+@transform('%s.*.gff3genes' % cfg.get('DEFAULT', 'genome'), suffix('.gff3genes'), '_genes')
+def convert_gff3_genes_to_bed(in_gff3, out_gene_pred):
+    """convert gff3 genes to UCSC's genePred format"""
+    sys_call('gff3ToGenePred %s %s' % (in_gff3, out_gene_pred), file_log=False)
 
 @active_if(cfg.getboolean('genes','download_refseq'))
 @files(None, '%s.refseq_genes' % cfg.get('DEFAULT', 'genome'))
@@ -345,7 +307,7 @@ def make_raw_signal_around_genes(in_files, _, out_pattern, binsize=50, windowsiz
     #in_expression, in_genes, in_other_reads = (in_files[0], in_files[1],
     #                                              in_files[2:])
     in_expression, in_genes, in_bigwigs = (in_files[0], in_files[1],
-                                                  in_files[2])
+                                                  in_files[2:])
     # parse gene expression values
     gene_expr = {}
     for line in [line for line in open(in_expression) if "N/A" not in line]:
@@ -383,7 +345,7 @@ def make_raw_signal_around_genes(in_files, _, out_pattern, binsize=50, windowsiz
             #    density_by_base = sp.ma.masked_invalid(density_by_base)
             #    for j in xrange(windowsize // binsize):
             #        read_density[j,i] = sp.ma.compressed(density_by_base[j*binsize:(j+1)*binsize]).sum()
-            
+            print chrom, start, stop
             reads_here = in_wig.get(chrom, start, stop)
             if reads_here is None:
                 continue
@@ -394,22 +356,22 @@ def make_raw_signal_around_genes(in_files, _, out_pattern, binsize=50, windowsiz
                 read_density[j,i] = sum(l[2] for l in reads_here if start_bin <= (l[0] + l[1]) / 2 <= stop_bin)
         sp.save(out_pattern % in_wig_name, read_density)
 
-@active_if(False)
+#@active_if(False)
 @collate(make_raw_signal_around_genes, regex(r'(.*\.gene\.expression)\..*\.raw_signal_around.npy'), r'\1.all_raw_signals.png')
 def draw_raw_signal_around_genes(raw_signals, out_png, windowsize=20000):
     """draw the raw signals as computed by make_raw_signal_around_genes"""
     gene_expr = filter(lambda f: 'gene_expr' in f, raw_signals)
     reads = filter(lambda f: 'gene_expr' not in f and 'matched_size' not in f, raw_signals)
     pyplot.figure()
-    f, plots = pyplot.subplots(1, len(reads)+1, sharex=False, sharey=True)
+    f, plots = pyplot.subplots(1, len(reads)+1, sharex=False, sharey=True, squeeze=False)
     #sig_min = reduce(min, map(min, map(sp.load, reads)))
     #sig_max = reduce(max, map(max, map(sp.load, reads)))
     for i, read_sig in enumerate(reads):
         #plots[i+1].imshow(sp.load(read_sig), interpolation='nearest', vmin=sig_min, vmax=sig_max)
-        plots[i+1].imshow(sp.ma.filled(sp.load(read_sig), fill_value=0).T, interpolation='nearest', aspect=.05)
-        plots[i+1].text(0,0,read_sig.split('gene.expression.')[1].split('.')[0], rotation=30, verticalalignment='bottom')
+        plots[0, i+1].imshow(sp.ma.filled(sp.load(read_sig), fill_value=0).T, interpolation='nearest', aspect=.05)
+        plots[0, i+1].text(0,0,read_sig.split('gene.expression.')[1].split('.')[0], rotation=30, verticalalignment='bottom')
     gexpr_ma = sp.load(gene_expr[0]).astype(float)
-    plots[0].imshow(sp.ma.filled(gexpr_ma.reshape(1,gexpr_ma.shape[0]), fill_value=0).T, interpolation='nearest', aspect=.002)
+    plots[0, 0].imshow(sp.ma.filled(gexpr_ma.reshape(1,gexpr_ma.shape[0]), fill_value=0).T, interpolation='nearest', aspect=.002)
     #yticks(sp.arange())
     shape = sp.load(read_sig).shape
     pyplot.xticks(sp.arange(0, shape[0] + shape[0]/4, shape[0] / 4), sp.arange(-windowsize/2, windowsize/2 + windowsize/4, windowsize/4))
