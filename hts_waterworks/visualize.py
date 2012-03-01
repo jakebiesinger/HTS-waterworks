@@ -6,7 +6,7 @@
 import tempfile
 import re
 
-from ruffus import (transform, follows, merge,
+from ruffus import (transform, follows, merge, split,
                     add_inputs, regex, suffix, jobs_limit)
 from ruffus.task import active_if
 
@@ -21,7 +21,7 @@ import hts_waterworks.clip_seq as clip_seq
 
 @jobs_limit(cfg.get('DEFAULT', 'max_throttled_jobs'), 'throttled')
 @follows(bootstrap.get_chrom_sizes)
-@transform(call_peaks.all_peak_caller_functions + [pas_seq.remove_terminal_exon] + mapping.all_mappers_output + mapping.all_mappers_raw_reads,
+@transform(call_peaks.all_peak_caller_functions + [pas_seq.remove_terminal_exon] + [clip_seq.search_genome_consensus] + mapping.all_mappers_output + mapping.all_mappers_raw_reads,
            suffix(''), '.clipped.sorted')
 def clip_and_sort_peaks(in_bed, out_sorted):
     """Sort the bed file and constrain bed regions to chromosome sizes"""
@@ -99,6 +99,35 @@ def bed_to_bedgraph(in_files, out_bedgraph):
                         genome_path(), out_bedgraph)
     sys_call(cmd)
 
+@active_if(cfg.getboolean('visualization', 'split_strands'))
+@split([bed_uniquefy, clip_and_sort_peaks] + mapping.all_mappers_output,
+    regex('(.*mapped_reads).clipped.sorted(.unique|)'),
+    #suffix('.mapped_reads'),
+    add_inputs(bootstrap.get_chrom_sizes),
+    [r'\1\2.plus.bedgraph', r'\1\2.minus.bedgraph'])
+    #r'.bedgraph')
+def bed_to_bedgraph_by_strand(in_files, out_bedgraphs):
+    'extend reads to the full fragment length and create a bedgraph from them'
+    in_bed, in_chrom_sizes = in_files
+    cmd = ("""slopBed -i %s -s -r %s -l 0 -g %s | awk '{if ($6 == "+") print $0}' | """ + \
+            'bedItemOverlapCount %s -chromSize=%s.chrom.sizes stdin > %s') % (
+                        in_bed,
+                        cfg.getint('DEFAULT','fragment_size') - \
+                                            cfg.getint('DEFAULT','tag_size'),
+                        in_chrom_sizes, cfg.get('DEFAULT', 'genome'),
+                        genome_path(), out_bedgraph[0])
+    sys_call(cmd)
+    
+    cmd = ("""slopBed -i %s -s -r %s -l 0 -g %s | awk '{if ($6 == "-") print $0}' | """ + \
+            'bedItemOverlapCount %s -chromSize=%s.chrom.sizes stdin > %s') % (
+                        in_bed,
+                        cfg.getint('DEFAULT','fragment_size') - \
+                                            cfg.getint('DEFAULT','tag_size'),
+                        in_chrom_sizes, cfg.get('DEFAULT', 'genome'),
+                        genome_path(), out_bedgraph[1])
+    sys_call(cmd)
+
+
 @active_if(cfg.getboolean('visualization', 'normalize_per_million'))
 @follows(bed_to_bedgraph)
 @transform([bed_uniquefy, clip_and_sort_peaks] + mapping.all_mappers_output,
@@ -124,9 +153,10 @@ def bedgraph_normalize_per_million(in_files, out_bedgraph):
 #        start, chrom = None, None
 #        line = infile.next()
 #        for line in infile:
-            
 
-@transform([bedgraph_normalize_per_million, bed_to_bedgraph, clip_seq.pileup_starts],
+
+@transform([bedgraph_normalize_per_million, bed_to_bedgraph,
+            bed_to_bedgraph_by_strand, clip_seq.pileup_starts],
     regex(r'(.*)\.(bedgraph|pileup_reads)'), r'\1.bigwig')
 def bedgraph_to_bigwig(in_bedgraph, out_bigwig):
     """Convert the bedgraph file to .bigwig for viewing on UCSC"""
@@ -134,7 +164,13 @@ def bedgraph_to_bigwig(in_bedgraph, out_bigwig):
                                                      out_bigwig)
     sys_call(cmd)
 
-@merge([bedgraph_to_bigwig, bed_to_bigbed], 'ucsc.track.headers')
+@transform([call_peaks.quest_to_wig], suffix('.wig'), '.bigwig')
+def wig_to_bigwig(in_wig, out_bigwig):
+    """Convert the wig file to a bigwig file"""
+    cmd = 'wigToBigWig %s %s.chrom.sizes %s' % (in_wig, genome_path(), out_bigwig)
+    sys_call(cmd)
+
+@merge([wig_to_bigwig, bedgraph_to_bigwig, bed_to_bigbed], 'ucsc.track.headers')
 def make_track_headers(in_files, out_header):
     """For all the visualization files, create UCSC track headers"""
     with open(out_header,'w') as outfile:
@@ -156,7 +192,7 @@ def make_track_headers(in_files, out_header):
             outfile.write(track_str)
 
 @follows(make_track_headers)
-@merge([bedgraph_to_bigwig, bed_to_bigbed], 'ucsc.track.ready')
+@merge([wig_to_bigwig, bedgraph_to_bigwig, bed_to_bigbed], 'ucsc.track.ready')
 def deploy_track_files(in_files, out_header):
     """Copy UCSC tracks to public url"""
     remote = cfg.get('visualization', 'remote_ssh_dir')
