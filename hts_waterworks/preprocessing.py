@@ -5,6 +5,8 @@
 
 import re
 
+import matplotlib
+matplotlib.use('Agg')
 from matplotlib import pyplot
 from Bio import SeqIO
 from ruffus import (transform, follows, collate, files, split, merge,
@@ -136,7 +138,8 @@ def quality_nuc_dist(in_stats, out_dist):
         in_stats, in_stats, out_dist)
     sys_call(cmd)
 
-@merge([clip_adapter, trim_reads, trim_regex,
+@merge(['*.fastq_illumina' if cfg.getboolean('filtering', 'convert_sanger_to_illumina') else '*.fastq',
+        clip_adapter, trim_reads, trim_regex,
         filter_artifacts, filter_min_quality], 'fastq.wikisummary')
 def summarize_fastq_reads(in_fastq, out_summary):
     """Summarize fastq line counts"""
