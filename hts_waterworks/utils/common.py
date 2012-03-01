@@ -91,7 +91,7 @@ def readBedLines(bedlines, dataOnly=True):
     """Return data portion of a bed file"""
     filteredLines = itertools.ifilter(bedCommentFilter, bedlines)
     for line in filteredLines:
-        features = line.split('\t')
+        features = line.strip().split('\t')
         if len(features) >= 6:
             chrom, start, stop, _, _, strand = features[:6]
         else:

@@ -209,7 +209,7 @@ def sample_resource(annotDB, sizeDistribution, sampleSize=100000,
 
 
 #def calc_pwm_bg_dist(matrix, genome, keepScores=False, sampleSize=100000, samples=None, **kwargs):
-def calc_pwm_bg_dist(matrix, genome, keepScores=False, sampleSize=100000, samples=None, **kwargs):
+def calc_pwm_bg_dist(matrix, genome, keepScores=False, sampleSize=10000, samples=None, **kwargs):
     """ Sample the given genome to approximate the background distribution for the given matrix
             returns the (mean,stdev) of the distribution
         The function takes about 40 seconds for 100,000 samples or 6 minutes for 1 million

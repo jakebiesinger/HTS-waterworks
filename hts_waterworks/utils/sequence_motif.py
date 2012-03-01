@@ -91,12 +91,16 @@ def makePWMFromIUPAC(iupac_motif):
 
 def search_bed_file(bedLines, pwm, genome, reportLocations=False):
     """ return lines of a bed file with instances of given motif """
+    print 'searching'
     for line in bedLines:
         if line[0] == '#' or line.split()[0] == 'track':
             # skip header and comment lines
             continue
         chrom, start, stop = line.split()[:3]
         start, stop = int(start), int(stop)
+        if start >= stop or start >= len(genome[chrom]):
+            continue
+        #print start, stop
         region = genome[chrom][start:stop]
         instances = pwm.find_in_region(region)
         motifFound = len(instances) > 0

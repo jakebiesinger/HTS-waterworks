@@ -64,9 +64,10 @@ def splitGeneStructure(geneLines, outNameBase, promoterSize, promoterExtend, dow
     noncoding_out = open(outNameBase + '.noncoding', 'w')
     for line in geneLines:
         try:
+            _ = int(line.strip().split('\t')[0])  # test if the first col is bin
             (name, chrom, strand, txStart, txEnd, cdsStart,
                 cdsEnd, exons, name2, noncoding) = parse_gene_line(line, startCol=1)
-        except ValueError:
+        except:
             (name, chrom, strand, txStart, txEnd, cdsStart,
                 cdsEnd, exons, name2, noncoding) = parse_gene_line(line, startCol=0)
         if noncoding:
