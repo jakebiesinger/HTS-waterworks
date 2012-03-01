@@ -53,12 +53,17 @@ def get_refseq_genes(_, out_genes):
     suffix('_genes'), '_genes.all')
 def refseq_genes_to_bed(in_genes, out_bed):
     """convert refseq genes file to BED format"""
+    try:
+        _ = int(open(in_genes).readline().strip().split('\t')[0])
+        s = 0
+    except:
+        s = -1
     with open(in_genes) as infile:
         with open(out_bed, 'w') as outfile:
             for line in infile:
                 fields = line.strip().split('\t')
-                chrom, start, stop = fields[2], fields[4], fields[5]
-                name, strand = fields[1], fields[3]
+                chrom, start, stop = fields[s+2], fields[s+4], fields[s+5]
+                name, strand = fields[s+1], fields[s+3]
                 outfile.write('\t'.join([chrom, start, stop, name,
                                          '0', strand]) + '\n')
 
@@ -79,7 +84,7 @@ def refseq_genes_to_regions(in_genes, out_pattern):
                             cfg.get('genes', 'downstream_extend')))
     makeGeneStructure.main(args)
 
-@follows(get_refseq_genes, convert_gtf_genes_to_bed)
+@follows(refseq_genes_to_bed, convert_gtf_genes_to_bed)
 @collate(call_peaks.all_peak_caller_functions + ['*.custom.peaks'],
          regex(r'(.+)\.treat\.(.+)\.peaks'), 
          add_inputs('%s*_genes.all' % cfg.get('DEFAULT', 'genome')),  r'\1.treat.\2.peaks.nearby.genes')
@@ -170,21 +175,23 @@ def get_nearest_features(in_files, _, out_pattern):
                 outfile.write('\t'.join(map(str, d)) + '\n') # distance as column
     os.unlink(tmp_output.name)
 
-@transform(get_nearest_features, suffix('.dist'),
-           '.dist.png')
-def plot_nearest_features(in_distances, out_png, window_size=20):
+@transform([get_nearest_features, '*.distances'], regex(r'(.*\.(dist|distances)$)'),
+           r'\1.png', r'\1')
+def plot_nearest_features(in_distances, out_png, test_out, window_size=20):
     """Plot a density of the distance to the nearest features"""
+    print out_png
+    print test_out
     R_script = r"""
 png('%(out_png)s')
 d<-read.table(file="%(in_data)s", header=TRUE, sep="\t");
 d = d / 1000;
 library(lattice);
-plot(density(unlist(d[1])[unlist(d[1]) < %(window_size)s & unlist(d[1]) > -%(window_size)s]), main="Feature densities around peaks", xlab="Distance (kb)", ylab="Density", xlim=c(-%(window_size)s,%(window_size)s))
+plot(density(unlist(d[1])[unlist(d[1]) < %(window_size)s & unlist(d[1]) > -%(window_size)s], na.rm=TRUE), main="Feature densities around peaks", xlab="Distance (kb)", ylab="Density", xlim=c(-%(window_size)s,%(window_size)s))
 index = 1
 r = rainbow(length(d))
 for (i in d) {
     i = i[i < %(window_size)s & i > -%(window_size)s]
-    lines(density(i, from=-%(window_size)s, to=%(window_size)s), col=r[index])
+    lines(density(i, from=-%(window_size)s, to=%(window_size)s, na.rm=TRUE), col=r[index])
     index = index + 1
 }
 legend("topleft", legend=names(d), col=r, lty=1)
@@ -198,7 +205,8 @@ dev.off()
 #@jobs_limit(cfg.getint('DEFAULT', 'max_throttled_jobs'), 'throttled')
 @follows(refseq_genes_to_regions, convert_gtf_genes_to_bed)
 #@split(call_peaks.all_peak_caller_functions + ['*.custom.peaks'] + ['*.merged.mapped_reads'],
-@split(['*.custom.peaks'] + ['*.merged.mapped_reads'],
+#@split(['*.custom.peaks'] + ['*.merged.mapped_reads'],
+@split(['*.custom.peaks'] + ['*.repro.peaks'] + [call_peaks.pileup_as_peaks],
          #regex(r'(.*).peaks'),
          regex(r'(.*)'),
          add_inputs('%s.*_genes' % cfg.get('DEFAULT', 'genome'), get_chrom_sizes),
@@ -210,7 +218,7 @@ def gene_overlap(in_files, out_files):
     """Check the overlap of peaks with a set of genes"""
     in_bed, in_gene_info, in_chrom_sizes = in_files
     out_gene_overlap = out_files[0]
-    args = shlex.split('''%s %s %s --genome=%s --random_shuffles=0
+    args = shlex.split('''%s %s %s --genome=%s --random_shuffles=100
                        --pie_output=%s.gene_structure_pie.png
                        --plot_dist_to_txStart=%s.dist_to_txStart.png
                        --bar_output=%s.fold_enrichment_vs_control.png
@@ -296,7 +304,8 @@ def make_expression_ks(in_files, out_pattern):
 
 
 
-@active_if(len(glob.glob('*.mapped_reads.bigwig')) > 0)
+#@active_if(len(glob.glob('*.mapped_reads.bigwig')) > 0)
+@active_if(False)
 @split('*.gene.expression', regex('(.*)'),
        #add_inputs(refseq_genes_to_bed, mapping.all_mappers_output + ['*.other_reads']),
        add_inputs(refseq_genes_to_bed, '*.mapped_reads.bigwig'),
@@ -468,7 +477,7 @@ dev.off()
 
 
 @active_if(False)
-@split(call_peaks.all_peak_caller_functions, regex(r'(.*)'),
+@split(call_peaks.all_peak_caller_functions, regex(r'(.*\.peaks)'),
            [r'\1.go_genelist', r'\1.go_enrichedGO', r'\1.go_Rout'])
 def gene_ontology(in_peaks, out_files):
     """Calculate the significance of the peaks near genes using BioConductor"""
