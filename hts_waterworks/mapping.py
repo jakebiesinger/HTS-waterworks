@@ -13,6 +13,7 @@ from ruffus import (transform, follows, files, split, merge, add_inputs,
                     regex, suffix, jobs_limit)
 from ruffus.task import active_if
 from pygr import worldbase, cnestedlist, seqdb
+import pybedtools
 
 from hts_waterworks.utils.ruffus_utils import (sys_call, main_logger as log,
                                            main_mutex as log_mtx)
@@ -213,15 +214,20 @@ def bowtie_to_bed(in_bowtie, out_bed):
 @active_if(cfg.getboolean('mapping', 'run_tophat'))
 @follows(build_bowtie_index)
 @jobs_limit(cfg.getint('DEFAULT', 'max_throttled_jobs'), 'throttled')
-@transform(preprocessing.final_output, suffix(''), '.tophat_reads')
+@transform(preprocessing.final_output, suffix(''), '_tophat_out/accepted_hits.bam')
+#@transform(preprocessing.final_output, regex(r'(64_CLIP1.*)'), r'\1_tophat_out/accepted_hits.bam')
 def run_tophat(in_fastq, out_tophat):
     'gapped alignment of reads to reference using TopHat'
-    cmd = 'tophat %s %s %s --output-dir=%s' % (genome_path(), in_fastq,
+    cmd = 'tophat %s %s %s --output-dir=%s --GTF %s' % (genome_path(), in_fastq,
                                   cfg.get('mapping', 'bowtie_params'),
-                                  '%s_tophat_out' % in_fastq)
+                                  '%s_tophat_out' % in_fastq,
+                                  'hg19.refseq_genes.gff')
     sys_call(cmd)
-    # TODO: convert BAM output to BED format
 
+@transform(run_tophat, suffix('_tophat_out/accepted_hits.bam'), '.tophat.mapped_reads')
+def tophat_bam_to_bed(in_bam, out_bed):
+    cmd = 'bamToBed -i %s > %s' % (in_bam, out_bed)
+    sys_call(cmd)
 
 # Mapping with ssaha2
 @active_if(cfg.getboolean('mapping', 'run_ssaha2'))
@@ -325,7 +331,7 @@ def maq_map_to_bed(in_map, out_bed):
 
 
 all_mappers_output = [bowtie_to_bed, pash_to_bed, mosaik_to_bed, run_ssaha2,
-                      maq_map_to_bed]
+                      maq_map_to_bed, tophat_bam_to_bed]
 all_mappers_raw_reads = all_mappers_output[:]
 
 
@@ -411,13 +417,12 @@ if cfg.getboolean('peaks', 'downsample_reads'):
            '.collapsedID.mapped_reads')
 def collapse_mapped_read_IDs(in_bed, out_bed):
     """Reads with the same ID and start,strand are collapsed into a single read
-    The ID is defined as any characters following the final underscore in the
-    4th column of the BED file ("name")
+    The ID is defined as any characters following the second-to-last underscore
+    in the 4th column of the BED file ("name")
     """
     with tempfile.NamedTemporaryFile() as tmp_sorted:
         # sort the file by chrom, start positions
-        cmd = r"sort -t$'\t' -k 1,1 -k 2,2n -S 2G %s > %s" % (in_bed, tmp_sorted.name)
-        sys_call(cmd)
+        bedfile = pybedtools.BedTool(in_bed).sort().saveas(tmp_sorted.name)
         with open(out_bed, 'w') as outfile:
             p_chrom, p_start, p_name, p_strand = None, None, None, None
             for line in open(tmp_sorted.name):
@@ -436,38 +441,32 @@ if cfg.getboolean('mapping', 'collapse_mapped_read_IDs'):
 @transform(all_mappers_output, suffix('.mapped_reads'),
            '.no_internal_priming.mapped_reads')
 def remove_internal_priming(in_bed, out_bed):
-    """Reads that map to genomic locations with 7+ A's in the 10nt downstream of
-    the end of the read should be filtered out
+    """Reads that map to genomic locations with 6 conseuctive downstream A's or
+    7/10 downstream nt being A's should be filtered out.
     """
     wb_genome = worldbase(cfg.get('DEFAULT', 'worldbase_genome'))
     with open(out_bed, 'w') as outfile:
         for line in open(in_bed):
-            chrom,start,stop,name,score,strand = line.split('\t')
+            chrom,start,stop,name,score,strand = line.strip().split('\t')
             start, stop = int(start), int(stop)
+            if strand not in ['+','-']:
+                raise RuntimeError("unknown strand", strand, line)
             if strand == '+':
-                try:
-                    seq = str(wb_genome[chrom][start:stop]).upper()
-                except IndexError:
-                    seq = ''
-                seq_A = seq.count('AAAAAA')
                 try:
                     downstream = str(wb_genome[chrom][stop:stop+10]).upper()
                 except IndexError:
                     downstream = ''
                 down_A = downstream.count('A')
+                down_consecutive_A= downstream.count('A' * 6)
             else:
-                try:
-                    seq = str(wb_genome[chrom][start:stop]).upper()
-                except IndexError:
-                    seq = ''
-                seq_A = seq.count('TTTTTT')
                 try:
                     downstream = str(wb_genome[chrom][max(0,start-10):start]).upper()
                 except IndexError:
                     downstream = ''
                 down_A  = downstream.count('T')
+                down_consecutive_A = downstream.count('T' * 6)
             #filter if 6+ consecutive A's in sequence or 7+ A's downstream
-            if seq_A < 1 and down_A < 7:
+            if down_consecutive_A < 1 and down_A < 7:
                 outfile.write(line)
 if cfg.getboolean('mapping', 'remove_internal_priming'):
     all_mappers_output = [remove_internal_priming]
@@ -496,18 +495,14 @@ if cfg.getboolean('mapping', 'separate_by_strand'):
 @transform(all_mappers_output, suffix('.mapped_reads'), '.sorted.mapped_reads')
 def bed_clip_and_sort(in_bed, out_sorted):
     """Sort the bed file and constrain bed regions to chromosome sizes"""
-    with tempfile.NamedTemporaryFile() as tmp_clipped:
-        cmd = 'bedClip %s %s.chrom.sizes %s' % (in_bed, genome_path(),
-                                                tmp_clipped.name)
-        sys_call(cmd)
-        #cmd = 'bedSort %s %s' % (out_clipped, out_sorted)
-        cmd = r"sort -t $'\t' -k 1,1 -k 2,2n -S 2G %s > %s" % (tmp_clipped.name, out_sorted)
-        sys_call(cmd)
+    bedfile = pybedtools.BedTool(in_bed).sort()\
+                .truncate_to_chrom(cfg.get('DEFAULT', 'genome'))
+    bedfile.saveas(out_sorted)
 all_mappers_output = [bed_clip_and_sort]
 
 
 @merge([bowtie_to_bed, pash_to_bed, mosaik_to_bed, run_ssaha2, maq_map_to_bed,
-        uniquefy_downsample_reads, collapse_mapped_read_IDs,
+        uniquefy_downsample_reads, collapse_mapped_read_IDs, tophat_bam_to_bed,
         remove_internal_priming, bed_clip_and_sort], 'mapped_reads.wikisummary')
 def summarize_mapped_reads(in_mapped, out_summary):
     """Summarize counts of mapped reads"""
