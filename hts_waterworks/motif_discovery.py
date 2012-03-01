@@ -54,7 +54,7 @@ def get_top_peaks(in_peaks, out_subset, num_peaks_to_keep):
         seqs.sort(key=lambda x: int(x[4]), reverse=True)
         with open(out_subset, 'w') as outfile:
             subset = seqs[:num_peaks_to_keep]
-            outfile.writelines('\t'.join(map(str, s)) for s in subset)
+            outfile.writelines('\t'.join(map(str, s)) + '\n' for s in subset)
 
 #@follows(get_genome)
 @transform([get_top_peaks], suffix(''), '.fasta')
@@ -244,6 +244,7 @@ def sample_control_like_peaks(in_peaks, out_files):
 ###          sample_genome_like_peaks,
 ###          motif_mean_sd],
 ###    regex(), )
+@active_if(False)  #whats going on with sampling???
 @split(motif_mean_sd, regex(r'(.*)\.with_mean_sd\.motifs'),
        add_inputs([call_peaks.all_peak_caller_functions +
                   [get_top_peaks, '*custom.peaks'], sample_genome_like_peaks]),
@@ -304,6 +305,7 @@ def consensus_enrichment(in_files, out_enrichment):
                                         out_enrichment))
         motif_significance.main(args)
 
+@active_if(False)  #whats going on with sampling???
 @follows(motif_mean_sd)
 @split(call_peaks.all_peak_caller_functions +
                 [get_top_peaks, '*.custom.peaks'] +
@@ -325,8 +327,16 @@ def motif_presence_sorted_peaks(in_files, out_patterns, in_prefix, in_suffix):
     old_size = matplotlib.rcParams['font.size']
     matplotlib.rcParams['font.size'] = 6
     # read in the peaks file, sorting it by *score*
-    peaks = sorted([l.strip().split('\t') for l in open(in_peaks)],
-                        key=lambda l:float(l[4]), reverse=True)
+    print in_peaks
+    print open(in_peaks).readline()
+    try:
+        peaks = [float(l.strip().split('\t')[4]) for l in open(in_peaks)]
+        print peaks
+        peaks = sorted([l.strip().split('\t') for l in open(in_peaks)],
+                        key=lambda line:float(line[4]), reverse=True)
+    except ValueError:
+        print 'here is the error!', l.strip(), float(l.strip().split('\t')[4])
+        raise
     motifs_in_peaks = dict((tuple(p), defaultdict(list)) for p in peaks)
     for m_file in in_motifs:
         cur_motifs = {}
