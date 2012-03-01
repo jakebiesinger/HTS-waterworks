@@ -112,7 +112,8 @@ def main(argv=None):
     if opts.pie_output is not None:
         print '# Saving pie chart to %s' % opts.pie_output
         pyplot.figure(figsize=(8,8))
-        pyplot.pie(regionCounts[::-1], labels=namesInOrder[::-1])#, autopct='%.1f')
+        pyplot.pie(regionCounts[::-1], labels=namesInOrder[::-1], colors=('r','y','g','c','chartreuse', 'b','m'))#, autopct='%.1f')
+        #pyplot.pie(regionCounts[::-1], labels=namesInOrder[::-1])
         pyplot.title('%s %s regions overlap with Refseq Genes' % (expName, sum(regionCounts)))
         pyplot.savefig(opts.pie_output)
         pyplot.close()
@@ -154,6 +155,9 @@ def main(argv=None):
             
         averageRandCounts = dict(zip(namesInOrder, [float(count) / opts.random_shuffles for count in randomCounts]))
         print '%s total shuffles, average distribution in genes is:\n%s' % (opts.random_shuffles, averageRandCounts)
+        if opts.output_file is not None:
+            with open(opts.output_file, 'a') as outfile:
+                outfile.write('\t'.join([bedfile + '_random', str(sum(averageRandCounts.values())), str(averageRandCounts)]) + '\n')
         randRegionCounts = [averageRandCounts[name] for name in namesInOrder]
         if opts.pie_output is not None:
             print 'saving random pie chart'
@@ -235,7 +239,7 @@ outfile.close()
     cmd += ' | python -c "%s" ' % (countAndPass % (bedFile + '.' + geneFiles[0]))
     for infile in geneFiles[1:]:
         cmd += subsets % (infile, bedFile + '.' + infile)
-    cmd += ' > /dev/null'
+    cmd += ' > intergenic.sites'
     #print cmd
     p = subprocess.Popen(cmd, shell=True, stderr=subprocess.PIPE)
     stderr_out = p.communicate()[1]
@@ -256,6 +260,8 @@ def getNearestTss(in_peaks, in_tss):
     all_dists = []
     with tempfile.NamedTemporaryFile() as tmp_output:
         cmd = 'closestBed -a %s -b %s -t first -d > %s' % (in_peaks, in_tss, tmp_output.name)
+        print cmd
+        offset = len(open(in_peaks).readline().strip().split('\t'))
         p = subprocess.Popen(cmd, shell=True)
         p.communicate()
         with open(tmp_output.name) as infile:
@@ -264,7 +270,7 @@ def getNearestTss(in_peaks, in_tss):
                     continue
                 fields = line.strip().split('\t')
                 p_chrom, p_start, p_end = fields[0], int(fields[1]), int(fields[2])
-                g_chrom, g_start, g_end = fields[6], int(fields[7]), int(fields[8])
+                g_chrom, g_start, g_end = fields[offset], int(fields[offset+1]), int(fields[offset+2])
                 if p_chrom == 'none' or g_chrom == 'none':
                     continue
                 dist = min(g_start - p_start, g_start - p_end,
