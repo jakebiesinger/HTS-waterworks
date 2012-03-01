@@ -117,15 +117,15 @@ run_arem = False
 arem_params = -g hs
 
 run_glitr = False
-glitr_params = --NUMCPUS=%(max_threads)s --GLITR=/opt --FRAGLEN=%(fragment_length) --SEQLEN=%(tag_size)s --NN=70 --KNN=100 --FDR=%(max_FDR)s
+glitr_params = --NUMCPUS=%(max_threads)s --GLITR=/opt --FRAGLEN=%(fragment_size)s --SEQLEN=%(tag_size)s --NN=70 --KNN=100 --FDR=%(max_FDR)s
 
 run_quest = False
-quest_params =
-quest_directory = ''
-quest_params_generate_step1 = y
-quest_params_generate_step2 = 1
-quest_params_generate_step3 = 2
-quest_params_generate_step4 = y
+#quest_params =
+#quest_directory = ''
+#quest_params_generate_step1 = y
+#quest_params_generate_step2 = 1
+#quest_params_generate_step3 = 2
+#quest_params_generate_step4 = y
 
 peak_summit_size = 50
 
@@ -134,6 +134,8 @@ peak_summit_size = 50
 uniquefy_track = True
 # maximum number of reads to show at each position
 uniquefy_track_max_reads = 2
+
+split_strands = False
 
 normalize_per_million = True
 
