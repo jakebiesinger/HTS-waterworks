@@ -53,6 +53,9 @@ def ruffus_opt_parser():
                         default='pipeline.cfg',
                         type="string",
                         help="Configuration file for the pipeline")
+    parser.add_option("--touch", dest="touch_only",
+                        action='store_true',
+                        help="Bring pipeline up to date by traversing and touching files")
     return parser
 
 class DefaultLog:
@@ -125,7 +128,8 @@ def ruffus_main(options, args):
         pipeline_run(options.target_tasks, options.forced_tasks,
                             multiprocess    = options.jobs,
                             logger          = main_logger,
-                            verbose         = options.verbose)
+                            verbose         = options.verbose,
+                            touch_files_only = options.touch_only)
 
 
 def sys_call(cmd, logger=main_logger, log_mutex=main_mutex, file_log=True):
