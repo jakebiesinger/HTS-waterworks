@@ -8,9 +8,10 @@ import random
 import os
 import tempfile
 import pickle
+from os.path import join
 
 from ruffus import (transform, follows, files, split, merge, add_inputs,
-                    regex, suffix, jobs_limit)
+                    regex, suffix, jobs_limit, mkdir)
 from ruffus.task import active_if
 from pygr import worldbase, cnestedlist, seqdb
 import pybedtools
@@ -25,6 +26,11 @@ import hts_waterworks.preprocessing as preprocessing
 reference_genomes = [genome_path()]
 if cfg.getboolean('mapping', 'map_to_transcriptome'):
     reference_genomes.append('*_genes.transcriptome.fasta')
+
+@follows(mkdir('mapped'))
+def make_mapping_dir():
+    pass
+
 
 @active_if(cfg.getboolean('mapping', 'map_to_transcriptome'))
 @split('*_genes', regex(r'(.*)_genes$'),
@@ -99,6 +105,7 @@ def make_transcriptome(in_genes, out_files):
     outfile.close()
     pickle.dump(gene_db, open(out_db, 'w'))
 
+
 @active_if(cfg.getboolean('mapping', 'run_mosaik'))
 @transform(reference_genomes, suffix(''), '.mosaik_dat')
 def run_mosaik_build_reference(in_genome, out_bin):
@@ -106,8 +113,8 @@ def run_mosaik_build_reference(in_genome, out_bin):
     cmd = 'MosaikBuild -fr %s -oa %s' % (in_genome, out_bin)
     sys_call(cmd)
 
-mosaik_suffix_base = r'\1.mosaik_jump_%s' % cfg.getint('mapping',
-                                                       'mosaik_hash_size')
+
+mosaik_suffix_base = r'\1.mosaik_jump_%s' % cfg.getint('mapping', 'mosaik_hash_size')
 @split(run_mosaik_build_reference, regex('(.*)\.mosaik_dat'),
        [mosaik_suffix_base + '_keys.jmp',
         mosaik_suffix_base + '_meta.jmp',
@@ -126,6 +133,7 @@ def run_mosaik_build_reads(in_fastq, out_dat):
     cmd = 'MosaikBuild -q %s -out %s -st illumina' % (in_fastq, out_dat)
     sys_call(cmd)
 
+
 @jobs_limit(cfg.getint('DEFAULT', 'max_throttled_jobs'), 'throttled')
 @transform(run_mosaik_build_reads, suffix('.mosaik_reads_dat'),
            add_inputs(run_mosaik_build_reference, run_mosiak_jump_reference),
@@ -141,6 +149,7 @@ def run_mosaik_align(in_files, out_align):
                    cfg.get('mapping', 'mosaik_params'))
     sys_call(cmd)
 
+
 @transform(run_mosaik_align, suffix('.mosaik_align_dat'), '.mosaik_align_sam')
 def mosaik_to_sam(in_dat, out_sam):
     'convert mosaik alignments to SAM format'
@@ -148,6 +157,7 @@ def mosaik_to_sam(in_dat, out_sam):
     sys_call(cmd)
     cmd = 'gunzip %s.gz' % out_sam
     sys_call(cmd)
+
 
 @transform(mosaik_to_sam, suffix('.mosaik_align_sam'), '.mosaik.mapped_reads')
 def mosaik_to_bed(in_sam, out_bed):
@@ -164,6 +174,7 @@ def run_pash(in_fastq, out_pash):
     cmd = cmd % (genome_path(), in_fastq, out_pash,
                         cfg.get('mapping', 'pash_params'))
     sys_call(cmd)
+
 
 @transform(run_pash, suffix('.pash_reads'), '.pash.mapped_reads')
 def pash_to_bed(in_pash, out_bed):
@@ -183,16 +194,24 @@ def build_bowtie_index(in_genome, out_pattern):
     cmd = 'bowtie-build %s %s' % (in_genome, in_genome)
     sys_call(cmd)
 
+
 @active_if(cfg.getboolean('mapping', 'run_bowtie'))
-@follows(build_bowtie_index)
+@follows(build_bowtie_index, make_mapping_dir)
 @jobs_limit(cfg.getint('DEFAULT', 'max_throttled_jobs'), 'throttled')
-@transform(preprocessing.final_output, suffix(''), '.bowtie_reads')
+@transform(preprocessing.final_output, regex(r'(.*)\.gz'), join('..', 'mapped', r'\1.bowtie_reads'))
 def run_bowtie(in_fastq, out_bowtie):
     'align reads to reference using Bowtie'
-    cmd = 'bowtie %s %s %s %s' % (genome_path(),
-                                  cfg.get('mapping', 'bowtie_params'),
-                                  in_fastq, out_bowtie)
-    sys_call(cmd)
+    cmd1 = 'zcat %s' % in_fastq
+    cmd2 = 'bowtie %s %s - %s' % (genome_path(), cfg.get('mapping', 'bowtie_params'),
+                                  out_bowtie)
+    p1 = Popen([cmd1], stdout=PIPE, shell=True)
+    p2 = Popen([cmd2], stdin=p1.stdout, shell=True)
+    p2.communicate()
+    if p1.returncode:
+        raise CalledProcessError(p1.returncode, cmd1)
+    if p2.returncode:
+        raise CalledProcessError(p2.returncode, cmd2)
+
 
 @transform(run_bowtie, suffix('.bowtie_reads'), '.bowtie.mapped_reads')
 def bowtie_to_bed(in_bowtie, out_bed):
@@ -214,15 +233,22 @@ def bowtie_to_bed(in_bowtie, out_bed):
 @active_if(cfg.getboolean('mapping', 'run_tophat'))
 @follows(build_bowtie_index)
 @jobs_limit(cfg.getint('DEFAULT', 'max_throttled_jobs'), 'throttled')
-@transform(preprocessing.final_output, suffix(''), '_tophat_out/accepted_hits.bam')
+@transform(preprocessing.final_output, suffix('.gz'), '_tophat_out/accepted_hits.bam')
 #@transform(preprocessing.final_output, regex(r'(64_CLIP1.*)'), r'\1_tophat_out/accepted_hits.bam')
 def run_tophat(in_fastq, out_tophat):
     'gapped alignment of reads to reference using TopHat'
-    cmd = 'tophat %s %s %s --output-dir=%s --GTF %s' % (genome_path(), in_fastq,
+    cmd1 = 'zcat %s' % in_fastq
+    cmd2 = 'tophat %s - %s --output-dir=%s --GTF %s' % (genome_path(),
                                   cfg.get('mapping', 'bowtie_params'),
                                   '%s_tophat_out' % in_fastq,
                                   'hg19.refseq_genes.gff')
-    sys_call(cmd)
+    p1 = Popen([cmd1], stdout=PIPE, shell=True)
+    p2 = Popen([cmd2], stdin=p1.stdout, shell=True)
+    p2.communicate()
+    if p1.returncode:
+        raise CalledProcessError(p1.returncode, cmd1)
+    if p2.returncode:
+        raise CalledProcessError(p2.returncode, cmd2)
 
 @transform(run_tophat, suffix('_tophat_out/accepted_hits.bam'), '.tophat.mapped_reads')
 def tophat_bam_to_bed(in_bam, out_bed):
@@ -501,9 +527,12 @@ def bed_clip_and_sort(in_bed, out_sorted):
 all_mappers_output = [bed_clip_and_sort]
 
 
+
+@follows(mkdir(summaries))
 @merge([bowtie_to_bed, pash_to_bed, mosaik_to_bed, run_ssaha2, maq_map_to_bed,
         uniquefy_downsample_reads, collapse_mapped_read_IDs, tophat_bam_to_bed,
-        remove_internal_priming, bed_clip_and_sort], 'mapped_reads.wikisummary')
+        remove_internal_priming, bed_clip_and_sort],
+    join('..','summaries', 'mapped_reads.wikisummary'))
 def summarize_mapped_reads(in_mapped, out_summary):
     """Summarize counts of mapped reads"""
     with open(out_summary, 'w') as outfile:
