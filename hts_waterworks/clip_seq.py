@@ -15,6 +15,7 @@ import shlex
 
 from ipdb import set_trace as breakpoint
 from matplotlib import pyplot
+import matplotlib
 from mpl_toolkits.mplot3d import Axes3D
 import pybedtools
 from ruffus import (transform, follows, merge, split, collate,

@@ -8,8 +8,8 @@ import cPickle as pickle
 
 from hts_waterworks.utils.sampling import sample_resource, sample_genome
 from hts_waterworks.utils.sequence_motif import (search_bed_file, Motif,
-                                             makePWMFromIUPAC, zscore_normal,
-                                             pvalue_hypergeometric)
+                        makePWMFromIUPAC, zscore_normal, pvalue_hypergeometric,
+                        parseMotifsFromTransfac)
 from hts_waterworks.utils.common import (getFullGenomeName, readBedLines,
                                      parseFastaLines)
 
@@ -39,6 +39,7 @@ def main(argv=None):
     parser.add_option('--report_region', type='string', help='Report the genomic regions of peaks with motif instances to this file')
     parser.add_option("--output_file", '-f', dest="output_file", type="string",
                       help="""Append the zscore information to the given file""")
+    parser.add_option('--search_genome', action='store_true')
     if argv is None:
         argv = sys.argv[1:]
     opts, args = parser.parse_args(argv)
@@ -62,7 +63,10 @@ def main(argv=None):
     allMotifs = {}
     # load pickled dict of motifs
     if opts.motif_file:
-        allMotifs.update(pickle.load(file(opts.motif_file, 'rb')))
+        if opts.motif_file.endswith('.transfac'):
+            allMotifs.update(parseMotifsFromTransfac(open(opts.motif_file, 'r').read()))
+        else:
+            allMotifs.update(pickle.load(open(opts.motif_file)))
     # create consensus dict of motifs
     if opts.consensus_file:
         with open(opts.consensus_file) as infile:
@@ -85,14 +89,28 @@ def main(argv=None):
     for motifKey in allKeys:
         print '# Loaded motif %s...' % motifKey
         pwm = allMotifs[motifKey]
-        if type(pwm) is list:
+        if isinstance(pwm, list):
             pwm = Motif(pwm)
             allMotifs[motifKey] = pwm
         if not pwm.bg_calculated():
             print '# Calculating motif background distribution...'
             pwm.calculate_background(genome)
             updated_motifs = True
-        print 'motif %s: length=%s threshold=%s mean=%s sd=%s' % (motifKey, len(pwm), pwm.get_threshold(opts.zscore), pwm._mean, pwm._sd)
+        print 'motif %s: length=%s threshold=%s mean=%s sd=%s max_score=%s' % (motifKey, len(pwm), pwm.get_threshold(opts.zscore), pwm._mean, pwm._sd, pwm.max_score())
+        
+        if opts.search_genome and opts.report_region is not None:
+            # search the genome with the motif
+            print 'searching genome!'
+            with open(opts.report_region, 'w') as outfile:
+                for chrom in genome:
+                    for match in pwm.find_in_region(genome[chrom]):
+                        outstr = '{chrom}\t{start}\t{stop}\t{name}\t{score}\t{strand}\n'.format(chrom=chrom,
+                                                                start=match[0], stop=match[1],
+                                                                name=motifKey,score=pwm.calc_score(match[3]),
+                                                                strand='+' if match[2] == 1 else '-')
+                        outfile.write(outstr)
+            continue
+        
         allPeaks = open(args[0]).readlines()
         allPeaks = list(readBedLines(allPeaks))
         peakSizes = [stop - start for _, start, stop, _ in allPeaks]

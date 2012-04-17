@@ -7,6 +7,7 @@ import re
 from os.path import join
 from subprocess import Popen, PIPE, check_call
 import gzip
+from collections import defaultdict
 
 import matplotlib
 matplotlib.use('Agg')
@@ -151,8 +152,14 @@ if cfg.getboolean('filtering', 'filter_quality'):
 @transform(prev_output, suffix(prev_suffix), '.read_lengths.png')
 def read_length_histogram(in_fastq, out_hist):
     """draw histogram of read lengths"""
-    cmd = 'fasta_clipping_histogram.pl %s %s' % (in_fastq, out_hist)
-    check_call(cmd)
+    length_count = defaultdict(int)
+    for header, seq, qual in parseFastq(gzip.open(in_fastq)):
+        length_count[len(seq)] += 1
+    pyplot.figure()
+    pyplot.bar(range(1,max(length_count)+1),
+               [length_count[l] for l in range(1, max(length_count)+1)],
+               align='center')
+    pyplot.savefig(out_hist)
 
 
 @transform([original_reads, prev_output],
