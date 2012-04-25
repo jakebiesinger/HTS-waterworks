@@ -199,7 +199,9 @@ def build_bowtie_index(in_genome, out_pattern):
 @active_if(cfg.getboolean('mapping', 'run_bowtie'))
 @follows(build_bowtie_index, make_mapping_dir)
 @jobs_limit(cfg.getint('DEFAULT', 'max_throttled_jobs'), 'throttled')
-@transform(preprocessing.final_output, regex(r'(.*)/(.*)\.gz'), relpath(join(r'\1', '..', 'mapped', r'\2.bowtie_reads')))
+@transform(preprocessing.final_output, regex(r'(.*)'), 
+           #relpath(join(r'\1', '..', 'mapped', r'\2.bowtie_reads')))
+           r'\1.bowtie_reads')
 def run_bowtie(in_fastq, out_bowtie):
     'align reads to reference using Bowtie'
     cmd1 = 'zcat %s' % in_fastq
@@ -533,7 +535,8 @@ all_mappers_output = [bed_clip_and_sort]
 @merge([bowtie_to_bed, pash_to_bed, mosaik_to_bed, run_ssaha2, maq_map_to_bed,
         uniquefy_downsample_reads, collapse_mapped_read_IDs, tophat_bam_to_bed,
         remove_internal_priming, bed_clip_and_sort],
-    relpath(join('..','summaries', 'mapped_reads.wikisummary')))
+    #relpath(join('..','summaries', 'mapped_reads.wikisummary')))
+    'mapped_reads.wikisummary')
 def summarize_mapped_reads(in_mapped, out_summary):
     """Summarize counts of mapped reads"""
     with open(out_summary, 'w') as outfile:

@@ -23,12 +23,12 @@ from hts_waterworks.bootstrap import cfg
 from hts_waterworks.utils.common import parseFastq
 
 # filtering
-original_reads = join('raw', '*.fastq.gz')
+original_reads = '*.fastq'
 prev_output = original_reads
-prev_suffix = '.fastq.gz'
+prev_suffix = '.fastq'
 
 @active_if(cfg.getboolean('filtering', 'convert_sanger_to_illumina'))
-@transform(prev_output, suffix(prev_suffix), '.fastq_ilmna.gz')
+@transform(prev_output, suffix(prev_suffix), '.fastq_illumina')
 def convert_fastq(in_fastq, out_fastq):
     'convert sanger fastq format (phred-33) to illumina format (phred-64)'
     base_out = os.path.splitext(out_fastq)[0]
@@ -38,16 +38,16 @@ def convert_fastq(in_fastq, out_fastq):
     check_call('gzip %s' % base_out, shell=True)
 if cfg.getboolean('filtering', 'convert_sanger_to_illumina'):
     prev_output = convert_fastq
-    prev_suffix = '.gz'
+    prev_suffix = ''
 
 
 
 @active_if(cfg.getboolean('filtering', 'clip_adapter'))
-@transform(prev_output, suffix(prev_suffix), '.noAdapter.gz')
+@transform(prev_output, suffix(prev_suffix), '.noAdapter')
 def clip_adapter(in_fastq, out_fastq):
     'remove adapter sequence from raw reads'
-    cmd1 = 'zcat %s' % in_fastq
-    cmd2 = 'fastx_clipper -o %s -a %s -z' % (out_fastq,
+    cmd1 = 'cat %s' % in_fastq
+    cmd2 = 'fastx_clipper -o %s -a %s' % (out_fastq,
                                     cfg.get('filtering', 'adapter_sequence'))
     p1 = Popen([cmd1], stdout=PIPE, shell=True)
     p2 = Popen([cmd2], stdin=p1.stdout, shell=True)
@@ -58,14 +58,14 @@ def clip_adapter(in_fastq, out_fastq):
         raise CalledProcessError(p2.returncode, cmd2)
 if cfg.getboolean('filtering', 'clip_adapter'):
     prev_output = clip_adapter
-    prev_suffix = '.gz'
+    prev_suffix = ''
 
 
 @active_if(cfg.getboolean('filtering', 'trim_reads'))
-@transform(prev_output, suffix(prev_suffix), '.trimmed.gz')
+@transform(prev_output, suffix(prev_suffix), '.trimmed')
 def trim_reads(in_fastq, out_fastq):
     'trim leading and/or trailing bases from all reads'
-    cmd1 = 'zcat %s' % in_fastq
+    cmd1 = 'cat %s' % in_fastq
     cmd2 = 'fastx_trimmer -o %s -f %s -l %s' % (out_fastq,
                                     cfg.get('filtering', 'trim_start'),
                                     cfg.get('filtering', 'trim_end'))
@@ -78,11 +78,11 @@ def trim_reads(in_fastq, out_fastq):
         raise CalledProcessError(p2.returncode, cmd2)
 if cfg.getboolean('filtering', 'trim_reads'):
     prev_output = trim_reads
-    prev_suffix = '.gz'
+    prev_suffix = ''
 
 
 @active_if(cfg.get('filtering', 'trim_regex') != '')
-@transform(prev_output, suffix(prev_suffix), '.trim_regex.gz',
+@transform(prev_output, suffix(prev_suffix), '.trim_regex',
            cfg.get('filtering', 'trim_regex'))
 def trim_regex(in_fastq, out_fastq, trim_pattern):
     """Search the reads for a regex, and trim everything matching the pattern
@@ -107,11 +107,11 @@ def trim_regex(in_fastq, out_fastq, trim_pattern):
                                                               header, qual))
 if cfg.get('filtering', 'trim_regex') != '':
     prev_output = trim_regex
-    prev_suffix = '.gz'
+    prev_suffix = ''
 
 
 @active_if(cfg.getboolean('filtering', 'filter_artifacts'))
-@transform(prev_output, suffix(prev_suffix), '.noArtifacts.gz')
+@transform(prev_output, suffix(prev_suffix), '.noArtifacts')
 def filter_artifacts(in_fastq, out_fastq):
     """Remove sequences with only 3/4 nucleotides (no As or no Ts or ...)"""
     cmd1 = 'zcat %s' % in_fastq
@@ -125,17 +125,17 @@ def filter_artifacts(in_fastq, out_fastq):
         raise CalledProcessError(p2.returncode, cmd2)
 if cfg.getboolean('filtering', 'filter_artifacts'):
     prev_output = filter_artifacts
-    prev_suffix = '.gz'
+    prev_suffix = ''
 
 
 @active_if(cfg.getboolean('filtering', 'filter_quality'))
-@transform(prev_output, suffix(prev_suffix), '.min_qual.gz',
+@transform(prev_output, suffix(prev_suffix), '.min_qual',
         cfg.getint('filtering', 'filter_min_quality'),
         cfg.getint('filtering', 'filter_percent_bases_at_min'))
 def filter_min_quality(in_fastq, out_fastq, min_qual, min_percent):
     """Remove sequences that have < min_precent bases with quality < min_qual"""
-    cmd1 = 'zcat %s' % in_fastq
-    cmd2 = 'fastq_quality_filter -o %s -q %s -p %s -z' % (out_fastq,
+    cmd1 = 'cat %s' % in_fastq
+    cmd2 = 'fastq_quality_filter -o %s -q %s -p %s' % (out_fastq,
                                                         min_qual, min_percent)
     p1 = Popen([cmd1], stdout=PIPE, shell=True)
     p2 = Popen([cmd2], stdin=p1.stdout, shell=True)
@@ -146,7 +146,7 @@ def filter_min_quality(in_fastq, out_fastq, min_qual, min_percent):
         raise CalledProcessError(p2.returncode, cmd2)
 if cfg.getboolean('filtering', 'filter_quality'):
     prev_output = filter_min_quality
-    prev_suffix = '.gz'
+    prev_suffix = ''
 
 
 @transform(prev_output, suffix(prev_suffix), '.read_lengths.png')
@@ -166,7 +166,7 @@ def read_length_histogram(in_fastq, out_hist):
         suffix(prev_suffix), '.qual_stats')
 def quality_stats(in_fastq, out_stats):
     """aggregate quality score statistics for original and filtered reads"""
-    cmd1 = 'zcat %s' % in_fastq
+    cmd1 = 'cat %s' % in_fastq
     cmd2 = 'fastx_quality_stats -o %s' % (out_stats)
     p1 = Popen([cmd1], stdout=PIPE, shell=True)
     p2 = Popen([cmd2], stdin=p1.stdout, shell=True)
@@ -196,7 +196,8 @@ def quality_nuc_dist(in_stats, out_dist):
 @follows(mkdir('summaries'))
 @merge([original_reads, clip_adapter, trim_reads, trim_regex,
         filter_artifacts, filter_min_quality],
-    join('..', 'summaries', 'fastq.wikisummary'))
+    #join('..', 'summaries', 'fastq.wikisummary'))
+    'fastq.wikisummary')
 def summarize_fastq_reads(in_fastq, out_summary):
     """Summarize fastq line counts"""
     with open(out_summary, 'w') as outfile:
