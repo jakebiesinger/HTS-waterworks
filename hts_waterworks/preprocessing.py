@@ -2,10 +2,10 @@
     module for filtering out low quality reads, trimming poly-A tails, etc
 """
 
-
+import os
 import re
 from os.path import join
-from subprocess import Popen, PIPE, check_call
+from subprocess import Popen, PIPE, check_call, CalledProcessError
 import gzip
 from collections import defaultdict
 
